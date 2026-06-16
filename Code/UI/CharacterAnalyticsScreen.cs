@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
+using CharacterManager.Analytics;
 using Godot;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
-using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 
 namespace CharacterManager.UI
@@ -37,6 +37,7 @@ namespace CharacterManager.UI
         private CharacterModel? _character;
         private Label? _titleLabel;
         private Label? _subtitleLabel;
+        private Label? _statusLabel;
         private VBoxContainer? _contentContainer;
 
         protected override Control? InitialFocusedControl => null;
@@ -126,6 +127,40 @@ namespace CharacterManager.UI
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
+            // Export button (M5) — sits to the left of Back.
+            var exportBtn = new Button
+            {
+                Text = "Export",
+                AnchorLeft = 1f,
+                AnchorRight = 1f,
+                OffsetLeft = -360f,
+                OffsetRight = -210f,
+                OffsetTop = PaddingTop,
+                OffsetBottom = PaddingTop + HeaderHeight,
+                TooltipText = "Write this character's stats to JSON + CSV",
+            };
+            exportBtn.AddThemeFontSizeOverride("font_size", 20);
+            exportBtn.Pressed += OnExport;
+            AddChild(exportBtn);
+
+            // Status line under the header (shows the export destination after a click).
+            _statusLabel = new Label
+            {
+                Text = "",
+                AnchorRight = 1f,
+                OffsetLeft = PaddingH,
+                OffsetRight = -PaddingH,
+                OffsetTop = PaddingTop + HeaderHeight + 14f,
+                OffsetBottom = PaddingTop + HeaderHeight + 34f,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+                AutowrapMode = TextServer.AutowrapMode.Off,
+                ClipText = true,
+            };
+            _statusLabel.AddThemeFontSizeOverride("font_size", 13);
+            _statusLabel.AddThemeColorOverride("font_color", SectionColor);
+            AddChild(_statusLabel);
+
             float scrollY = PaddingTop + HeaderHeight + 36f;
             var scroll = new ScrollContainer
             {
@@ -160,6 +195,7 @@ namespace CharacterManager.UI
 
             if (_titleLabel != null) _titleLabel.Text = c.Title.GetFormattedText();
             if (_subtitleLabel != null) _subtitleLabel.Text = "Analytics";
+            if (_statusLabel != null) _statusLabel.Text = ""; // clear any prior export message
 
             // ── Section 1: lifetime summary from CharacterStats ──────────────
             CharacterStats? stats = null;
@@ -190,7 +226,7 @@ namespace CharacterManager.UI
             }
 
             // ── Sections 2–4: aggregates parsed from run-history files ───────
-            var agg = AggregateRuns(c.Id);
+            var agg = CharacterAnalytics.Compute(c.Id);
             if (agg.Total == 0)
             {
                 AddTextSection("Run History",
@@ -236,76 +272,23 @@ namespace CharacterManager.UI
             AddListSection("Act Reached Distribution", actLines);
         }
 
-        // ─── Aggregation ─────────────────────────────────────────────────────
+        // ─── Export (M5) ─────────────────────────────────────────────────────
 
-        private sealed class RunAggregate
+        private void OnExport()
         {
-            public int Total, Wins, Deaths, Abandoned, MaxAct, MaxFloor;
-            public float MaxRunTime;
-            public double SumRunTime;
-            public float FastestWin = -1f;
-            public double AvgRunTime => Total > 0 ? SumRunTime / Total : 0;
-            public readonly Dictionary<int, (int w, int l)> PerAscension = new();
-            public readonly Dictionary<int, int> ActReached = new();
-        }
+            if (_character == null || _statusLabel == null) return;
 
-        /// <summary>Loads every run-history file once and aggregates the runs for this character.</summary>
-        private static RunAggregate AggregateRuns(ModelId characterId)
-        {
-            var agg = new RunAggregate();
-            List<string>? names = null;
-            try { names = SaveManager.Instance.GetAllRunHistoryNames(); }
-            catch (Exception e) { Log.Warn("[CharacterManager] GetAllRunHistoryNames failed: " + e.Message); }
-            if (names == null) return agg;
-
-            foreach (var name in names)
+            var result = StatsExporter.Export(_character);
+            if (result.Ok)
             {
-                try
-                {
-                    var result = SaveManager.Instance.LoadRunHistory(name);
-                    if (!result.Success) continue;
-                    RunHistory? h = result.SaveData;
-                    if (h == null) continue;
-
-                    bool matches = false;
-                    foreach (var p in h.Players)
-                        if (p.Character == characterId) { matches = true; break; }
-                    if (!matches) continue;
-
-                    agg.Total++;
-                    if (h.Win) agg.Wins++;
-                    else if (h.WasAbandoned) agg.Abandoned++;
-                    else agg.Deaths++;
-
-                    // Run length
-                    agg.SumRunTime += h.RunTime;
-                    if (h.RunTime > agg.MaxRunTime) agg.MaxRunTime = h.RunTime;
-                    if (h.Win && (agg.FastestWin < 0 || h.RunTime < agg.FastestWin))
-                        agg.FastestWin = h.RunTime;
-
-                    // Acts reached (number of acts entered) and floors (sum of map points)
-                    int actsReached = h.Acts?.Count ?? 0;
-                    if (actsReached > agg.MaxAct) agg.MaxAct = actsReached;
-                    if (!agg.ActReached.ContainsKey(actsReached)) agg.ActReached[actsReached] = 0;
-                    agg.ActReached[actsReached]++;
-
-                    int floors = 0;
-                    if (h.MapPointHistory != null)
-                        foreach (var rooms in h.MapPointHistory)
-                            floors += rooms?.Count ?? 0;
-                    if (floors > agg.MaxFloor) agg.MaxFloor = floors;
-
-                    // Per-ascension W/L
-                    int asc = h.Ascension;
-                    var cur = agg.PerAscension.TryGetValue(asc, out var v) ? v : (0, 0);
-                    agg.PerAscension[asc] = h.Win ? (cur.Item1 + 1, cur.Item2) : (cur.Item1, cur.Item2 + 1);
-                }
-                catch (Exception e)
-                {
-                    Log.Warn($"[CharacterManager] Could not aggregate run '{name}': {e.Message}");
-                }
+                _statusLabel.AddThemeColorOverride("font_color", SectionColor);
+                _statusLabel.Text = "Exported JSON + CSV to:  " + result.Directory;
             }
-            return agg;
+            else
+            {
+                _statusLabel.AddThemeColorOverride("font_color", new Color(0.85f, 0.4f, 0.35f));
+                _statusLabel.Text = "Export failed: " + result.Error;
+            }
         }
 
         // ─── Formatting ──────────────────────────────────────────────────────
