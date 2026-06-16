@@ -40,14 +40,17 @@ namespace CharacterManager
         public static List<CharacterModel> GetAllCharacters()
         {
             var custom = new List<CharacterModel>();
-            // Use reference equality to deduplicate — _contentById can store the same
-            // CharacterModel instance under multiple ModelId keys.
-            var seen = new HashSet<CharacterModel>(ReferenceEqualityComparer.Instance);
+            // Deduplicate by ModelId value — two CharacterModel instances can share the same
+            // logical Id when a character mod registers the character under multiple keys.
+            // Deduplicate by runtime type — each character is a unique class, so two
+            // instances of the same class are the same character regardless of how many
+            // ModelId keys point at them in _contentById.
+            var seen = new HashSet<Type>();
             if (ContentByIdField?.GetValue(null) is IDictionary<ModelId, AbstractModel> dict)
             {
                 foreach (var model in dict.Values)
                 {
-                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id) && seen.Add(c))
+                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id) && seen.Add(c.GetType()))
                         custom.Add(c);
                 }
             }
@@ -65,12 +68,12 @@ namespace CharacterManager
         public static List<CharacterModel> GetCustomCharacters()
         {
             var result = new List<CharacterModel>();
-            var seen = new HashSet<CharacterModel>(ReferenceEqualityComparer.Instance);
+            var seen = new HashSet<Type>();
             if (ContentByIdField?.GetValue(null) is IDictionary<ModelId, AbstractModel> dict)
             {
                 foreach (var model in dict.Values)
                 {
-                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id) && seen.Add(c))
+                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id) && seen.Add(c.GetType()))
                         result.Add(c);
                 }
             }
