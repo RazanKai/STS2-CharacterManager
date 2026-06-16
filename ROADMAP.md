@@ -11,6 +11,61 @@ gotchas are given in each milestone and in the **Verified API reference** append
 Verify names still exist with `get_entity_source` / `search_game_code` before
 patching, since the game updates.
 
+## Implementation status (updated 2026-06-16)
+
+### M1 — in progress (partially working)
+
+The Character Manager screen opens from the Compendium, renders all characters, and
+the three patch files are wired up. **Two known bugs block M1 completion:**
+
+**Bug 1 — Duplicate custom characters in the manager list.**
+Ryoshu and The Cursed each appear twice. Three deduplication strategies have been
+tried so far (all committed, none fixed it):
+
+1. `ReferenceEqualityComparer` on the `CharacterModel` instance — didn't help,
+   implying there are two distinct object instances.
+2. `HashSet<ModelId>` keyed on `c.Id` (record value equality) — didn't help,
+   implying the two instances have *different* `ModelId` values.
+3. `HashSet<Type>` keyed on `c.GetType()` — also didn't fix it, meaning the two
+   entries are not only different instances with different Ids, but *different classes*.
+
+This strongly suggests the character mods (Ryoshu, The Cursed) register multiple
+`CharacterModel` subclasses — likely a "base" class and a multiplayer-variant or
+alt-form subclass — both with `IsPlayable = true`. The correct fix is **not** to
+deduplicate at the enumeration layer, but to understand which classes are canonical
+player characters. Possible approaches:
+- Check if there is a distinguishing property (e.g. a custom attribute, a base class
+  specific to "real" characters vs variants, or `IsRandom == false` + some other flag).
+- Look at how `NCharacterSelectScreen.InitCharacterButtons()` selects characters
+  (verified: it calls `ModelDb.AllCharacters` for base and separately handles modded
+  ones) — compare with what we enumerate from `_contentById`.
+- Check if both classes have the same `Id.Entry` string but different `Id.Category`
+  and filter to only `Category == "character"` or similar.
+
+**Bug 2 — "Stats Shown" toggle has no effect; custom character stats don't appear
+in the Compendium stats screen.**
+The `VisibilityStore` in this mod (`CharacterManager.Config.VisibilityStore`) is
+persisted and toggled correctly by the UI, but **nothing reads it to drive the
+compendium stats display**. The base mod (`CustomCharacterStats`) had
+`NGeneralStatsGridPatch` (postfix on `NGeneralStatsGrid.LoadStats`) that injected
+per-character stat rows — but that patch was not ported to this mod.
+
+Required work: write `Code/Patches/StatsGridPatch.cs` — a Harmony postfix on
+`NGeneralStatsGrid.LoadStats` that:
+1. Calls `CharacterHelper.GetAllCharacters()` (or `GetCustomCharacters()` for
+   custom-only injection, matching what the base mod did).
+2. Reads `VisibilityStore.IsVisible(c.Id)` per character.
+3. For each visible character, appends a stat row (same pattern as the base mod's
+   `NGeneralStatsGridPatch` in `/home/nazar/Projects/STS2-CustomCharacterStats`).
+
+Reference implementation: read
+`/home/nazar/Projects/STS2-CustomCharacterStats/Code/Patches/NGeneralStatsGridPatch.cs`
+and port it, replacing `CharacterVisibilityStore` with our `VisibilityStore`.
+
+### M2–M5 — not started
+
+---
+
 ## Where the mod is today
 
 The current mod does three things, all read-side:
