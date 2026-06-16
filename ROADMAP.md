@@ -13,54 +13,94 @@ patching, since the game updates.
 
 ## Implementation status (updated 2026-06-16)
 
-### M1 — in progress (partially working)
+### M1 — core verified in-game; In-Select fix pending re-test
 
-The Character Manager screen opens from the Compendium, renders all characters, and
-the three patch files are wired up. **Two known bugs block M1 completion:**
+The Character Manager screen opens from the Compendium and renders all characters. As of
+this session, **Bug 1 (duplicates) and Bug 2 (stats toggle) are fixed and confirmed live**
+via screenshots: Ryoshu and The Cursed now appear once each, and the per-custom-character
+"Stats Shown" toggle drives the Compendium Statistics screen. Two follow-up items from
+in-game testing were then addressed (see "In-Select toggle" and "Base-character stats
+toggle" below); the In-Select fix is built/deployed but awaiting a confirming re-test.
 
-**Bug 1 — Duplicate custom characters in the manager list.**
-Ryoshu and The Cursed each appear twice. Three deduplication strategies have been
-tried so far (all committed, none fixed it):
+**Bug 1 — Duplicate custom characters in the manager list — FIXED (verified).**
+Root cause (proven by inspecting the installed mod DLLs): the installed character
+libraries **BaseLib, KitLib, and STS2 RitsuLib all Harmony-patch
+`ModelDb.get_AllCharacters`**, and the Ryoshu mod ships its own
+`ModelDbAllCharactersPatch`, to append modded characters to that array. So at runtime
+`ModelDb.AllCharacters` already contains Ryoshu and The Cursed. The old
+`GetAllCharacters()` then did `AddRange(ModelDb.AllCharacters)` **plus**
+`AddRange(custom from _contentById)` with **no dedup across the merge**, so every
+custom character was listed twice.
 
-1. `ReferenceEqualityComparer` on the `CharacterModel` instance — didn't help,
-   implying there are two distinct object instances.
-2. `HashSet<ModelId>` keyed on `c.Id` (record value equality) — didn't help,
-   implying the two instances have *different* `ModelId` values.
-3. `HashSet<Type>` keyed on `c.GetType()` — also didn't fix it, meaning the two
-   entries are not only different instances with different Ids, but *different classes*.
+The three earlier dedup attempts (ReferenceEquals, `HashSet<ModelId>`, `HashSet<Type>`)
+all failed for the same reason: each deduped only *within* the `_contentById` slice and
+so never collapsed an `AllCharacters` entry against a registry entry. The prior
+inference that "the mods register multiple subclasses" was incorrect — the duplication
+is across the two enumeration sources, not within one.
 
-This strongly suggests the character mods (Ryoshu, The Cursed) register multiple
-`CharacterModel` subclasses — likely a "base" class and a multiplayer-variant or
-alt-form subclass — both with `IsPlayable = true`. The correct fix is **not** to
-deduplicate at the enumeration layer, but to understand which classes are canonical
-player characters. Possible approaches:
-- Check if there is a distinguishing property (e.g. a custom attribute, a base class
-  specific to "real" characters vs variants, or `IsRandom == false` + some other flag).
-- Look at how `NCharacterSelectScreen.InitCharacterButtons()` selects characters
-  (verified: it calls `ModelDb.AllCharacters` for base and separately handles modded
-  ones) — compare with what we enumerate from `_contentById`.
-- Check if both classes have the same `Id.Entry` string but different `Id.Category`
-  and filter to only `Category == "character"` or similar.
+Fix (`Code/CharacterHelper.cs`): merge both sources (`ModelDb.AllCharacters` +
+`_contentById`) and deduplicate the **whole** result by `ModelId` — the key every store
+in this mod uses. Base characters are emitted first in canonical order, customs follow
+sorted by title. `GetCustomCharacters()` is now derived from `GetAllCharacters()` so the
+manager list and the Compendium stats injection always see the identical deduped set.
 
-**Bug 2 — "Stats Shown" toggle has no effect; custom character stats don't appear
-in the Compendium stats screen.**
-The `VisibilityStore` in this mod (`CharacterManager.Config.VisibilityStore`) is
-persisted and toggled correctly by the UI, but **nothing reads it to drive the
-compendium stats display**. The base mod (`CustomCharacterStats`) had
-`NGeneralStatsGridPatch` (postfix on `NGeneralStatsGrid.LoadStats`) that injected
-per-character stat rows — but that patch was not ported to this mod.
+**Bug 2 — "Stats Shown" toggle had no effect — FIXED (verified).**
+The `VisibilityStore` was toggled/persisted by the UI but nothing read it to drive the
+Compendium stats display, because the base mod's `NGeneralStatsGridPatch` had never been
+ported. Added `Code/Patches/StatsGridPatch.cs` — a Harmony postfix on
+`NGeneralStatsGrid.LoadStats` that appends one `NCharacterStats.Create(stats)` section to
+the private `_characterStatContainer` for each **custom** character that is visible
+(`VisibilityStore.IsVisible`) and has recorded stats (`GetStatsForCharacter != null`,
+matching the game's own base-character rendering). The game's `LoadStats` already adds the
+5 base sections, so the postfix is custom-only by design — the one place "custom-only"
+applies.
 
-Required work: write `Code/Patches/StatsGridPatch.cs` — a Harmony postfix on
-`NGeneralStatsGrid.LoadStats` that:
-1. Calls `CharacterHelper.GetAllCharacters()` (or `GetCustomCharacters()` for
-   custom-only injection, matching what the base mod did).
-2. Reads `VisibilityStore.IsVisible(c.Id)` per character.
-3. For each visible character, appends a stat row (same pattern as the base mod's
-   `NGeneralStatsGridPatch` in `/home/nazar/Projects/STS2-CustomCharacterStats`).
+**In-Select enable/disable toggle — FIXED (built/deployed; awaiting confirming re-test).**
+The "In Select" toggle (`EnabledStore` + `Code/Patches/CharacterSelectPatch.cs`) is meant
+to hide a disabled custom character from the character-select screen. Two successive
+attempts and what was learned:
 
-Reference implementation: read
-`/home/nazar/Projects/STS2-CustomCharacterStats/Code/Patches/NGeneralStatsGridPatch.cs`
-and port it, replacing `CharacterVisibilityStore` with our `VisibilityStore`.
+1. *First attempt — hide the button (failed).* Postfix `InitCharacterButtons`, find the
+   disabled character's `NCharacterSelectButton` under `_charButtonContainer`, set
+   `Visible = false`. Did nothing in-game. Decompiling STS2 RitsuLib showed why: it reshapes
+   the select screen — on `NCharacterSelectScreen._Ready` it installs an
+   `NCharacterButtonStripScroller` (reparents/measures the buttons), and it manages select
+   visibility through a thread-static **selection-policy scope** plus a postfix on the
+   `ModelDb.AllCharacters` getter (`CharacterVanillaSelectionPolicyAllCharactersPatch`),
+   filtering by an opt-in `IModCharacterVanillaSelectionPolicy.HideFromVanillaCharacterSelect`.
+   Hiding a button after the fact doesn't survive that pipeline.
+
+2. *Second attempt — filter the roster, wrong order (failed).* Mirror RitsuLib: arm a flag in
+   a prefix on `InitCharacterButtons`, disarm in a finalizer, and in a postfix on the
+   `ModelDb.AllCharacters` getter remove disabled customs while armed → the button is never
+   built. Correct design, but it still showed Ryoshu. **Root cause: Harmony postfix ordering.**
+   Modded characters are themselves *appended* to `ModelDb.AllCharacters` by other getter
+   postfixes (Ryoshu patches the getter itself; The Cursed via the framework). Our removal
+   postfix ran at default priority — *before* those add-postfixes — so it filtered a list that
+   didn't yet contain Ryoshu. (Confirmed our patches do apply: `ModEntry.Init` logs
+   "initialized" only *after* `PatchAll()`, which throws on failure.)
+
+3. *Current fix.* Same scope-flag + getter-postfix approach, but the getter postfix now runs
+   **last** — `[HarmonyPriority(Priority.Last)]` plus
+   `[HarmonyAfter("BaseLib", "KitLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry",
+   "Ryoshu", "TheCursedMod")]` — exactly as RitsuLib orders its own filter, so modded
+   characters are present in `__result` before we remove the disabled ones. Scope now covers
+   **both** select screens: `NCharacterSelectScreen.InitCharacterButtons` and
+   `NCustomRunScreen.InitCharacterButtons`. A one-line `Log.Info` reports how many were hidden,
+   so the game log confirms behavior. Grep to verify after a run:
+   `grep -iE "CharacterManager.*character-select|hid .* disabled" <godot.log>`.
+   Built and deployed; needs a full game restart (code hot-reload is unreliable here) and a
+   confirming look at character select + the log.
+
+**Base-character "Stats Shown" toggle removed.** In-game the manager showed a Stats-Shown
+toggle on base-character rows, but base characters always render on the Compendium stats
+screen (the game adds them itself; `StatsGridPatch` only injects custom rows), so the toggle
+did nothing. `CharacterManagerScreen.BuildCharacterRow` now shows a muted "Always" label for
+base rows and keeps the toggle only for custom characters.
+
+**Remaining for M1:** confirm the In-Select fix live (disable Ryoshu, open character select,
+verify it's gone and the log shows the "hid N disabled" line). Then the optional reorder/pin
+and conflict-detection stretch goals.
 
 ### M2–M5 — not started
 

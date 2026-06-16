@@ -206,16 +206,25 @@ namespace CharacterManager.UI
             nameCol.AddChild(sourceLbl);
             hbox.AddChild(nameCol);
 
-            // Visibility toggle (stats screen)
-            bool vis = VisibilityStore.IsVisible(character.Id);
-            var visBtn = MakeColorButton(vis ? "Shown" : "Hidden", vis);
-            visBtn.Pressed += () =>
+            // Visibility toggle (stats screen) — custom characters only. Base characters
+            // always appear on the Compendium stats screen (the game renders them itself;
+            // our StatsGridPatch only injects custom rows), so a toggle would be meaningless.
+            if (isCustom)
             {
-                bool now = VisibilityStore.Toggle(character.Id);
-                visBtn.Text = now ? "Shown" : "Hidden";
-                SetButtonColor(visBtn, now);
-            };
-            hbox.AddChild(visBtn);
+                bool vis = VisibilityStore.IsVisible(character.Id);
+                var visBtn = MakeColorButton(vis ? "Shown" : "Hidden", vis);
+                visBtn.Pressed += () =>
+                {
+                    bool now = VisibilityStore.Toggle(character.Id);
+                    visBtn.Text = now ? "Shown" : "Hidden";
+                    SetButtonColor(visBtn, now);
+                };
+                hbox.AddChild(visBtn);
+            }
+            else
+            {
+                hbox.AddChild(MakeAlwaysLabel());
+            }
 
             // Enable/disable in character select (custom only)
             if (isCustom)
@@ -338,6 +347,21 @@ namespace CharacterManager.UI
         private static void SetButtonColor(Button btn, bool active)
         {
             btn.AddThemeColorOverride("font_color", active ? GreenColor : RedColor);
+        }
+
+        /// <summary>A muted "Always" label sized like the toggle buttons — used for base
+        /// characters whose stats are always shown and can't be toggled.</summary>
+        private static Label MakeAlwaysLabel()
+        {
+            var lbl = new Label
+            {
+                Text = "Always",
+                CustomMinimumSize = new Vector2(100f, 0f),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            };
+            lbl.AddThemeColorOverride("font_color", MutedColor);
+            return lbl;
         }
 
         private static string GetSourceText(CharacterModel character)
