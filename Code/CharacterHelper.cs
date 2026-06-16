@@ -40,11 +40,14 @@ namespace CharacterManager
         public static List<CharacterModel> GetAllCharacters()
         {
             var custom = new List<CharacterModel>();
+            // Use reference equality to deduplicate — _contentById can store the same
+            // CharacterModel instance under multiple ModelId keys.
+            var seen = new HashSet<CharacterModel>(ReferenceEqualityComparer.Instance);
             if (ContentByIdField?.GetValue(null) is IDictionary<ModelId, AbstractModel> dict)
             {
                 foreach (var model in dict.Values)
                 {
-                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id))
+                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id) && seen.Add(c))
                         custom.Add(c);
                 }
             }
@@ -62,11 +65,12 @@ namespace CharacterManager
         public static List<CharacterModel> GetCustomCharacters()
         {
             var result = new List<CharacterModel>();
+            var seen = new HashSet<CharacterModel>(ReferenceEqualityComparer.Instance);
             if (ContentByIdField?.GetValue(null) is IDictionary<ModelId, AbstractModel> dict)
             {
                 foreach (var model in dict.Values)
                 {
-                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id))
+                    if (model is CharacterModel c && c.IsPlayable && !IsBaseCharacter(c.Id) && seen.Add(c))
                         result.Add(c);
                 }
             }
