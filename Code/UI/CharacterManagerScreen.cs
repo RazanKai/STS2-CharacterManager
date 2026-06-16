@@ -48,6 +48,9 @@ namespace CharacterManager.UI
         // ─── Child nodes built in _Ready ────────────────────────────────────────
         private VBoxContainer? _rowContainer;
 
+        // Reused info-card screen (M2), lazily created on first drill-in.
+        private CharacterInfoScreen? _infoScreen;
+
         // ─── NSubmenu contract ────────────────────────────────────────────────
         protected override Control? InitialFocusedControl => null;
 
@@ -194,10 +197,20 @@ namespace CharacterManager.UI
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
                 SizeFlagsVertical = SizeFlags.ShrinkCenter,
             };
-            var nameLbl = new Label { Text = character.Title.GetFormattedText() };
-            nameLbl.AddThemeFontSizeOverride("font_size", 21);
-            nameLbl.AddThemeColorOverride("font_color", new Color(0.95f, 0.9f, 0.8f));
-            nameCol.AddChild(nameLbl);
+            // Clickable name → opens the M2 info card. Flat button styled to read like a heading.
+            var nameBtn = new Button
+            {
+                Text = character.Title.GetFormattedText(),
+                Flat = true,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                TooltipText = "View details",
+            };
+            nameBtn.Alignment = HorizontalAlignment.Left;
+            nameBtn.AddThemeFontSizeOverride("font_size", 21);
+            nameBtn.AddThemeColorOverride("font_color", new Color(0.95f, 0.9f, 0.8f));
+            nameBtn.AddThemeColorOverride("font_hover_color", HeaderColor);
+            nameBtn.Pressed += () => OpenInfo(character);
+            nameCol.AddChild(nameBtn);
 
             string sourceText = isCustom ? GetSourceText(character) : "Base game";
             var sourceLbl = new Label { Text = sourceText };
@@ -370,6 +383,26 @@ namespace CharacterManager.UI
             return mod != null
                 ? $"{mod.manifest.name} v{mod.manifest.version}"
                 : "Unknown mod";
+        }
+
+        /// <summary>Pushes the per-character info card (M2). One reused instance, like the
+        /// Compendium reuses this manager screen — set the character, then Push.</summary>
+        private void OpenInfo(CharacterModel character)
+        {
+            if (_stack == null)
+            {
+                Log.Error("[CharacterManager] _stack is null — cannot open info card.");
+                return;
+            }
+
+            if (_infoScreen == null || !GodotObject.IsInstanceValid(_infoScreen))
+            {
+                _infoScreen = new CharacterInfoScreen { Visible = false };
+                _stack.AddChild(_infoScreen);
+            }
+
+            _infoScreen.SetCharacter(character);
+            _stack.Push(_infoScreen);
         }
 
         private void OpenFilteredRunHistory(ModelId characterId)
