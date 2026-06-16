@@ -51,6 +51,9 @@ namespace CharacterManager.UI
         // Reused info-card screen (M2), lazily created on first drill-in.
         private CharacterInfoScreen? _infoScreen;
 
+        // Reused analytics screen (M4), lazily created on first drill-in.
+        private CharacterAnalyticsScreen? _analyticsScreen;
+
         // ─── NSubmenu contract ────────────────────────────────────────────────
         protected override Control? InitialFocusedControl => null;
 
@@ -139,7 +142,7 @@ namespace CharacterManager.UI
 
             var colHbox = AddHbox(colPanel, 12);
             AddColLabel(colHbox, "Character", SizeFlags.ExpandFill, 17);
-            foreach (var txt in new[] { "Stats Shown", "In Select", "Stats", "History" })
+            foreach (var txt in new[] { "Stats Shown", "In Select", "Stats", "History", "Analytics" })
                 AddColLabel(colHbox, txt, SizeFlags.ShrinkCenter, 14, 100f);
 
             // Scroll container for character rows
@@ -293,6 +296,17 @@ namespace CharacterManager.UI
             histBtn.Pressed += () => OpenFilteredRunHistory(character.Id);
             hbox.AddChild(histBtn);
 
+            // Analytics button — opens the per-character analytics drill-in (M4).
+            var analyticsBtn = new Button
+            {
+                Text = "Analytics",
+                CustomMinimumSize = new Vector2(100f, 0f),
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            };
+            analyticsBtn.AddThemeFontSizeOverride("font_size", 16);
+            analyticsBtn.Pressed += () => OpenAnalytics(character);
+            hbox.AddChild(analyticsBtn);
+
             return panel;
         }
 
@@ -403,6 +417,25 @@ namespace CharacterManager.UI
 
             _infoScreen.SetCharacter(character);
             _stack.Push(_infoScreen);
+        }
+
+        /// <summary>Pushes the per-character analytics screen (M4). One reused instance.</summary>
+        private void OpenAnalytics(CharacterModel character)
+        {
+            if (_stack == null)
+            {
+                Log.Error("[CharacterManager] _stack is null — cannot open analytics.");
+                return;
+            }
+
+            if (_analyticsScreen == null || !GodotObject.IsInstanceValid(_analyticsScreen))
+            {
+                _analyticsScreen = new CharacterAnalyticsScreen { Visible = false };
+                _stack.AddChild(_analyticsScreen);
+            }
+
+            _analyticsScreen.SetCharacter(character);
+            _stack.Push(_analyticsScreen);
         }
 
         private void OpenFilteredRunHistory(ModelId characterId)
