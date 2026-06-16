@@ -83,60 +83,22 @@ namespace CharacterManager.UI
             };
             AddChild(bg);
 
-            _titleLabel = new Label
-            {
-                Text = "Character",
-                AnchorRight = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH - 200f,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            _titleLabel.AddThemeFontSizeOverride("font_size", UiTheme.TitleFontSize);
-            _titleLabel.AddThemeColorOverride("font_color", HeaderColor);
+            _titleLabel = UiTheme.MakeLabel("Character", HeaderColor, UiTheme.TitleFontSize);
+            UiTheme.PlaceInColumn(_titleLabel, PaddingTop, HeaderHeight);
             AddChild(_titleLabel);
 
-            _sourceLabel = new Label
-            {
-                Text = "",
-                AnchorRight = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH - 200f,
-                OffsetTop = PaddingTop + HeaderHeight - 6f,
-                OffsetBottom = PaddingTop + HeaderHeight + 22f,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            _sourceLabel.AddThemeFontSizeOverride("font_size", UiTheme.SmallFontSize);
-            _sourceLabel.AddThemeColorOverride("font_color", MutedColor);
+            _sourceLabel = UiTheme.MakeLabel("", MutedColor, UiTheme.SmallFontSize);
+            UiTheme.PlaceInColumn(_sourceLabel, PaddingTop + HeaderHeight - 6f, 26f);
             AddChild(_sourceLabel);
 
-            var backBtn = new Button
-            {
-                Text = "← Back",
-                AnchorLeft = 1f,
-                AnchorRight = 1f,
-                OffsetLeft = -190f,
-                OffsetRight = -PaddingH,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-            };
-            backBtn.AddThemeFontSizeOverride("font_size", UiTheme.ButtonFontSize);
+            var backBtn = UiTheme.MakeButton("← Back", null, 120f);
+            UiTheme.PlaceColumnRight(backBtn, PaddingTop, HeaderHeight, 120f);
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
-            float scrollY = PaddingTop + HeaderHeight + 36f;
-            var scroll = new ScrollContainer
-            {
-                AnchorRight = 1f,
-                AnchorBottom = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH,
-                OffsetTop = scrollY,
-                OffsetBottom = -40f,
-            };
+            float scrollY = PaddingTop + HeaderHeight + 30f;
+            var scroll = new ScrollContainer();
+            UiTheme.PlaceColumnStretch(scroll, scrollY, UiTheme.PaddingTop);
             AddChild(scroll);
 
             _contentContainer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -161,11 +123,7 @@ namespace CharacterManager.UI
 
             // Header
             if (_titleLabel != null)
-            {
                 _titleLabel.Text = c.Title.GetFormattedText();
-                try { _titleLabel.AddThemeColorOverride("font_color", c.NameColor); }
-                catch { /* keep default header color if NameColor is unavailable */ }
-            }
             if (_sourceLabel != null)
                 _sourceLabel.Text = BuildSourceText(c);
 
@@ -207,9 +165,11 @@ namespace CharacterManager.UI
             if (potions.Count > 0)
                 AddListSection("Starting Potions", potions);
 
-            // Unlock requirement
+            // Unlock requirement. Skip when the lookup didn't resolve (returns the raw key, e.g.
+            // "characters.IRONCLAD.unlockText") — base characters are unlocked by default and have
+            // no unlock string.
             string unlock = SafeName(() => c.GetUnlockText().GetFormattedText(), "");
-            if (!string.IsNullOrWhiteSpace(unlock))
+            if (!string.IsNullOrWhiteSpace(unlock) && !LooksLikeLocKey(unlock))
                 AddTextSection("Unlock", unlock);
         }
 
@@ -328,6 +288,15 @@ namespace CharacterManager.UI
             outer.AddChild(body);
 
             return panel;
+        }
+
+        /// <summary>True if the text looks like an unresolved localization key (no spaces, dotted,
+        /// or the literal unlockText/LOCKED markers) rather than real display text.</summary>
+        private static bool LooksLikeLocKey(string s)
+        {
+            if (s.Contains("unlockText") || s.Contains("LOCKED.title")) return true;
+            // Dotted token with no spaces, e.g. "characters.IRONCLAD.unlockText".
+            return !s.Contains(' ') && s.Contains('.');
         }
 
         /// <summary>Resolves a possibly-throwing name lookup, falling back on failure.</summary>

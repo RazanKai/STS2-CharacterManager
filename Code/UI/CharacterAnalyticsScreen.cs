@@ -84,98 +84,41 @@ namespace CharacterManager.UI
             };
             AddChild(bg);
 
-            _titleLabel = new Label
-            {
-                Text = "Analytics",
-                AnchorRight = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH - 200f,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            _titleLabel.AddThemeFontSizeOverride("font_size", UiTheme.TitleFontSize);
-            _titleLabel.AddThemeColorOverride("font_color", HeaderColor);
+            _titleLabel = UiTheme.MakeLabel("Analytics", HeaderColor, UiTheme.TitleFontSize);
+            UiTheme.PlaceInColumn(_titleLabel, PaddingTop, HeaderHeight);
             AddChild(_titleLabel);
 
-            _subtitleLabel = new Label
-            {
-                Text = "Analytics",
-                AnchorRight = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH - 200f,
-                OffsetTop = PaddingTop + HeaderHeight - 6f,
-                OffsetBottom = PaddingTop + HeaderHeight + 22f,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            _subtitleLabel.AddThemeFontSizeOverride("font_size", UiTheme.SmallFontSize);
-            _subtitleLabel.AddThemeColorOverride("font_color", MutedColor);
+            _subtitleLabel = UiTheme.MakeLabel("Analytics", MutedColor, UiTheme.SmallFontSize);
+            UiTheme.PlaceInColumn(_subtitleLabel, PaddingTop + HeaderHeight - 6f, 26f);
             AddChild(_subtitleLabel);
 
-            var backBtn = new Button
-            {
-                Text = "← Back",
-                AnchorLeft = 1f,
-                AnchorRight = 1f,
-                OffsetLeft = -190f,
-                OffsetRight = -PaddingH,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-            };
-            backBtn.AddThemeFontSizeOverride("font_size", UiTheme.ButtonFontSize);
+            var backBtn = UiTheme.MakeButton("← Back", null, 120f);
+            UiTheme.PlaceColumnRight(backBtn, PaddingTop, HeaderHeight, 120f);
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
-            // Export button (M5) — sits to the left of Back.
-            var exportBtn = new Button
-            {
-                Text = "Export",
-                AnchorLeft = 1f,
-                AnchorRight = 1f,
-                OffsetLeft = -360f,
-                OffsetRight = -210f,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-                TooltipText = "Write this character's stats to JSON + CSV",
-            };
-            exportBtn.AddThemeFontSizeOverride("font_size", UiTheme.ButtonFontSize);
+            // Export button (M5) — sits to the left of Back, both anchored to the column's right edge.
+            var exportBtn = UiTheme.MakeButton("Export", null, 110f);
+            exportBtn.TooltipText = "Write this character's stats to JSON + CSV";
+            UiTheme.PlaceColumnRight(exportBtn, PaddingTop, HeaderHeight, 110f);
+            exportBtn.OffsetRight -= 128f; // shift left of the 120-wide Back button + gap
+            exportBtn.OffsetLeft -= 128f;
             exportBtn.Pressed += OnExport;
             AddChild(exportBtn);
 
             // Status line under the header (shows the export destination after a click).
-            _statusLabel = new Label
-            {
-                Text = "",
-                AnchorRight = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH,
-                OffsetTop = PaddingTop + HeaderHeight + 14f,
-                OffsetBottom = PaddingTop + HeaderHeight + 34f,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-                AutowrapMode = TextServer.AutowrapMode.Off,
-                ClipText = true,
-            };
-            _statusLabel.AddThemeFontSizeOverride("font_size", UiTheme.SmallFontSize);
-            _statusLabel.AddThemeColorOverride("font_color", SectionColor);
+            _statusLabel = UiTheme.MakeLabel("", SectionColor, UiTheme.SmallFontSize);
+            _statusLabel.ClipText = true;
+            UiTheme.PlaceInColumn(_statusLabel, PaddingTop + HeaderHeight + 12f, 20f);
             AddChild(_statusLabel);
 
-            float scrollY = PaddingTop + HeaderHeight + 36f;
-            var scroll = new ScrollContainer
-            {
-                AnchorRight = 1f,
-                AnchorBottom = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH,
-                OffsetTop = scrollY,
-                OffsetBottom = -40f,
-            };
+            float scrollY = PaddingTop + HeaderHeight + 34f;
+            var scroll = new ScrollContainer();
+            UiTheme.PlaceColumnStretch(scroll, scrollY, UiTheme.PaddingTop);
             AddChild(scroll);
 
             _contentContainer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            _contentContainer.AddThemeConstantOverride("separation", 14);
+            _contentContainer.AddThemeConstantOverride("separation", 10);
             scroll.AddChild(_contentContainer);
         }
 

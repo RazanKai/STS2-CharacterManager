@@ -32,6 +32,11 @@ namespace CharacterManager.UI
         public static readonly Color Divider = new Color(0.45f, 0.38f, 0.26f, 0.5f);
 
         // ─── Compact metrics (denser than the old layout) ────────────────────
+        // Content is laid out in a centred fixed-width column so it doesn't stretch across
+        // ultra-wide screens (the old full-width rows were the main "sparse" complaint).
+        public const float MaxContentWidth = 1180f;
+        private const float Half = MaxContentWidth / 2f;
+
         public const float PaddingH = 48f;
         public const float PaddingTop = 26f;
         public const float HeaderHeight = 48f;
@@ -63,6 +68,37 @@ namespace CharacterManager.UI
                 }
                 n = n.GetParent();
             }
+        }
+
+        // ─── Centred-column placement ────────────────────────────────────────
+        // All chrome is positioned inside a fixed-width column centred on screen, so the layout
+        // looks contained (like the game's panels) instead of stretching across an ultra-wide display.
+
+        /// <summary>Places a fixed-height control in the centred column at vertical offset <paramref name="top"/>.</summary>
+        public static void PlaceInColumn(Control c, float top, float height)
+        {
+            c.AnchorLeft = 0.5f; c.AnchorRight = 0.5f;
+            c.AnchorTop = 0f; c.AnchorBottom = 0f;
+            c.OffsetLeft = -Half; c.OffsetRight = Half;
+            c.OffsetTop = top; c.OffsetBottom = top + height;
+        }
+
+        /// <summary>Places a control in the centred column that stretches to the bottom (minus <paramref name="bottomPad"/>).</summary>
+        public static void PlaceColumnStretch(Control c, float top, float bottomPad)
+        {
+            c.AnchorLeft = 0.5f; c.AnchorRight = 0.5f;
+            c.AnchorTop = 0f; c.AnchorBottom = 1f;
+            c.OffsetLeft = -Half; c.OffsetRight = Half;
+            c.OffsetTop = top; c.OffsetBottom = -bottomPad;
+        }
+
+        /// <summary>Places a fixed-size control anchored to the RIGHT edge of the centred column.</summary>
+        public static void PlaceColumnRight(Control c, float top, float height, float width)
+        {
+            c.AnchorLeft = 0.5f; c.AnchorRight = 0.5f;
+            c.AnchorTop = 0f; c.AnchorBottom = 0f;
+            c.OffsetRight = Half; c.OffsetLeft = Half - width;
+            c.OffsetTop = top; c.OffsetBottom = top + height;
         }
 
         // ─── Builders ────────────────────────────────────────────────────────

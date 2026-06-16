@@ -57,31 +57,18 @@ namespace CharacterManager.UI
             float top = UiTheme.PaddingTop;
 
             var title = UiTheme.MakeLabel("Character Manager", UiTheme.Title, UiTheme.TitleFontSize);
-            title.AnchorRight = 1f;
-            title.OffsetLeft = UiTheme.PaddingH;
-            title.OffsetRight = -UiTheme.PaddingH;
-            title.OffsetTop = top;
-            title.OffsetBottom = top + UiTheme.HeaderHeight;
+            UiTheme.PlaceInColumn(title, top, UiTheme.HeaderHeight);
             AddChild(title);
 
             var backBtn = UiTheme.MakeButton("← Back", null, 120f);
-            backBtn.AnchorLeft = 1f;
-            backBtn.AnchorRight = 1f;
-            backBtn.OffsetLeft = -120f - UiTheme.PaddingH;
-            backBtn.OffsetRight = -UiTheme.PaddingH;
-            backBtn.OffsetTop = top;
-            backBtn.OffsetBottom = top + UiTheme.HeaderHeight;
+            UiTheme.PlaceColumnRight(backBtn, top, UiTheme.HeaderHeight, 120f);
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
             // Column header
             float colY = top + UiTheme.HeaderHeight + 8f;
             var colPanel = UiTheme.MakePanel(UiTheme.PanelBg, border: false);
-            colPanel.AnchorRight = 1f;
-            colPanel.OffsetLeft = UiTheme.PaddingH;
-            colPanel.OffsetRight = -UiTheme.PaddingH;
-            colPanel.OffsetTop = colY;
-            colPanel.OffsetBottom = colY + ColRowHeight;
+            UiTheme.PlaceInColumn(colPanel, colY, ColRowHeight);
             AddChild(colPanel);
 
             var colHbox = MakeHbox(colPanel, 10);
@@ -96,15 +83,8 @@ namespace CharacterManager.UI
 
             // Scrollable rows
             float scrollY = colY + ColRowHeight + 4f;
-            var scroll = new ScrollContainer
-            {
-                AnchorRight = 1f,
-                AnchorBottom = 1f,
-                OffsetLeft = UiTheme.PaddingH,
-                OffsetRight = -UiTheme.PaddingH,
-                OffsetTop = scrollY,
-                OffsetBottom = -UiTheme.PaddingTop,
-            };
+            var scroll = new ScrollContainer();
+            UiTheme.PlaceColumnStretch(scroll, scrollY, UiTheme.PaddingTop);
             AddChild(scroll);
 
             _rowContainer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
