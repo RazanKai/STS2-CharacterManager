@@ -44,22 +44,37 @@ namespace CharacterManager.Patches
     [HarmonyPatch]
     public static class CharacterSelectPatch
     {
-        // Armed only while an InitCharacterButtons method is executing. The select screens are
-        // built on the main (Godot) thread, so a plain static is sufficient.
-        private static bool _filtering;
+        // Depth counter, armed only while an InitCharacterButtons method is executing. The select
+        // screens are built on the main (Godot) thread, so a plain static is sufficient. A counter
+        // (not a bool) keeps the scope correct even if construction paths ever nest.
+        private static int _filterDepth;
+        private static bool _filtering => _filterDepth > 0;
 
         // ─── Arm/disarm around button construction (both select screens) ──────
+        //
+        // IMPORTANT: each arm/disarm method targets EXACTLY ONE method. Stacking multiple
+        // [HarmonyPatch] attributes on a single patch method does NOT patch several methods —
+        // Harmony MERGES them into one target descriptor (the last type wins). The previous version
+        // stacked NCharacterSelectScreen + NCustomRunScreen on one method, so only NCustomRunScreen
+        // was ever patched and the normal character-select screen was never armed (the getter
+        // postfix below short-circuited, so disabled customs were never hidden and nothing logged).
+        // One method per target is the reliable way to patch both.
 
         [HarmonyPrefix]
         [HarmonyPatch(typeof(NCharacterSelectScreen), "InitCharacterButtons")]
-        [HarmonyPatch(typeof(NCustomRunScreen), "InitCharacterButtons")]
-        public static void InitCharacterButtons_Prefix() => _filtering = true;
+        public static void Arm_Select() => _filterDepth++;
 
-        // Finalizer runs whether InitCharacterButtons returns normally or throws.
         [HarmonyFinalizer]
         [HarmonyPatch(typeof(NCharacterSelectScreen), "InitCharacterButtons")]
+        public static void Disarm_Select() => _filterDepth--;
+
+        [HarmonyPrefix]
         [HarmonyPatch(typeof(NCustomRunScreen), "InitCharacterButtons")]
-        public static void InitCharacterButtons_Finalizer() => _filtering = false;
+        public static void Arm_CustomRun() => _filterDepth++;
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(typeof(NCustomRunScreen), "InitCharacterButtons")]
+        public static void Disarm_CustomRun() => _filterDepth--;
 
         // ─── Remove disabled customs from the roster during construction ──────
         // Runs LAST so modded characters added by other getter postfixes are present in __result
