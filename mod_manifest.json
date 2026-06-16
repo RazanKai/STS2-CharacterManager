@@ -1,0 +1,14 @@
+{
+  "id": "charactermanager",
+  "name": "Character Manager",
+  "author": "Nazar",
+  "description": "Roster management for all characters: visibility, ordering, enable/disable in character select, per-character info cards, run-history filtering by character, and per-character analytics.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": false,
+  "min_game_version": "0.107.0",
+  "dependencies": [
+    { "id": "BaseLib" }
+  ]
+}

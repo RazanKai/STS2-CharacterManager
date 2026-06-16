@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>CharacterManager</RootNamespace>
+    <!-- Assembly name must match manifest id (case-sensitive on Linux). -->
+    <AssemblyName>charactermanager</AssemblyName>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppOutputBase>$(MSBuildProjectDirectory)\</AppOutputBase>
+    <Sts2Dir>/run/media/nazar/Gaaaymes/SteamLibrary/steamapps/common/Slay the Spire 2/data_sts2_linuxbsd_x86_64</Sts2Dir>
+    <ModsPath Condition="'$(ModsPath)' == '' and '$(Sts2Dir)' != ''">$([System.IO.Path]::Combine($([System.IO.Directory]::GetParent('$(Sts2Dir)').FullName), 'mods'))</ModsPath>
+    <EnableCopyToModsFolderOnBuild>false</EnableCopyToModsFolderOnBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <Optimize>false</Optimize>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+    <PathMap>$(AppOutputBase)=.</PathMap>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="GodotSharp" Version="4.4.0" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+    <!-- BaseLib is a runtime mod dependency; exclude from output to avoid duplicate registries. -->
+    <PackageReference Include="Alchyr.Sts2.BaseLib" Version="3.2.*" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="sts2">
+      <HintPath>$(Sts2Dir)/sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyToModsFolderOnBuild"
+          AfterTargets="PostBuildEvent"
+          Condition="'$(EnableCopyToModsFolderOnBuild)' == 'true' and '$(ModsPath)' != ''">
+    <PropertyGroup>
+      <_ModOutputDir>$([System.IO.Path]::Combine('$(ModsPath)', '$(MSBuildProjectName)'))</_ModOutputDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_ModOutputDir)" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).dll" DestinationFolder="$(_ModOutputDir)"
+          Condition="Exists('$(TargetDir)$(TargetName).dll')" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(_ModOutputDir)"
+          Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\mod_manifest.json" DestinationFolder="$(_ModOutputDir)"
+          Condition="Exists('$(MSBuildProjectDirectory)\mod_manifest.json')" />
+  </Target>
+</Project>
