@@ -1,10 +1,8 @@
 using System;
-using System.Collections.Generic;
 using CharacterManager.Config;
 using Godot;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
-using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.RunHistoryScreen;
 using MegaCrit.Sts2.Core.Saves;
@@ -12,159 +10,109 @@ using MegaCrit.Sts2.Core.Saves;
 namespace CharacterManager.UI
 {
     /// <summary>
-    /// The main Character Manager screen — a full-screen NSubmenu subclass built entirely
-    /// in code (no .tscn scene). Pushed onto the menu stack from the Compendium.
-    ///
-    /// Layout:
-    ///   ┌─────────────────────────────────────────┐
-    ///   │  CHARACTER MANAGER             [← Back] │
-    ///   ├─────────────────────────────────────────┤
-    ///   │  Column header (sticky)                  │
-    ///   │  ScrollContainer with character rows     │
-    ///   └─────────────────────────────────────────┘
+    /// The main Character Manager screen — a code-built NSubmenu (no .tscn). Pushed onto the menu
+    /// stack from the Compendium. M6 restyle: denser rows, the game palette (<see cref="UiTheme"/>),
+    /// row portraits, and the inherited game theme/font.
     ///
     /// Implementation notes:
     /// - We do NOT call base._Ready() — it checks GetType() == typeof(NSubmenu) and throws for subclasses.
     /// - We do NOT call base.ConnectSignals() — that would GetNode<NBackButton>("BackButton") and throw.
-    /// - NSubmenuStack.Push/Pop never call HideBackButtonImmediately, so _backButton=null is safe.
     /// - _stack is set by NSubmenuStack.SetStack(this) before we are pushed; it is valid on OnSubmenuOpened.
     /// </summary>
     public class CharacterManagerScreen : NSubmenu
     {
-        // ─── Layout constants ────────────────────────────────────────────────────
-        private const float PaddingH = 80f;
-        private const float PaddingTop = 40f;
-        private const float HeaderHeight = 72f;
-        private const float ColRowHeight = 48f;
-        private const float RowHeight = 90f;
-        private const int RowSpacing = 8;
+        private const float ColRowHeight = 34f;
+        private const float ColWidth = 92f;
+        private const float StatsColWidth = 70f;
+        private const float PortraitSize = 38f;
 
-        private static readonly Color BgColor = new Color(0.08f, 0.08f, 0.12f, 0.96f);
-        private static readonly Color HeaderColor = new Color(0.85f, 0.72f, 0.4f);
-        private static readonly Color MutedColor = new Color(0.55f, 0.55f, 0.6f);
-        private static readonly Color GreenColor = new Color(0.25f, 0.75f, 0.35f);
-        private static readonly Color RedColor = new Color(0.8f, 0.25f, 0.2f);
-
-        // ─── Child nodes built in _Ready ────────────────────────────────────────
         private VBoxContainer? _rowContainer;
+        private CharacterInfoScreen? _infoScreen;       // reused M2 drill-in
+        private CharacterAnalyticsScreen? _analyticsScreen; // reused M4 drill-in
 
-        // Reused info-card screen (M2), lazily created on first drill-in.
-        private CharacterInfoScreen? _infoScreen;
-
-        // Reused analytics screen (M4), lazily created on first drill-in.
-        private CharacterAnalyticsScreen? _analyticsScreen;
-
-        // ─── NSubmenu contract ────────────────────────────────────────────────
         protected override Control? InitialFocusedControl => null;
 
-        // ─── Godot entry point ────────────────────────────────────────────────
         public override void _Ready()
         {
-            // Do NOT call base._Ready() — it throws for subclasses by design.
+            UiTheme.ApplyGameTheme(this);
             ConnectSignals();
             BuildLayout();
         }
 
-        protected override void ConnectSignals()
-        {
-            // Do NOT call base.ConnectSignals() — that GetNode<NBackButton>("BackButton") would throw.
-            // Push/Pop in NSubmenuStack only set Visible=true/false; they never touch _backButton,
-            // and OnScreenVisibilityChange (which does) is only wired via base.ConnectSignals().
-        }
+        protected override void ConnectSignals() { /* see class note — base would look up a BackButton */ }
 
-        public override void OnSubmenuOpened()
-        {
-            PopulateRows();
-        }
+        public override void OnSubmenuOpened() => PopulateRows();
 
-        public override void OnSubmenuClosed()
-        {
-            base.OnSubmenuClosed(); // clears _lastFocusedControl — safe (doesn't access _backButton)
-        }
+        public override void OnSubmenuClosed() => base.OnSubmenuClosed();
 
-        // ─── One-time layout construction ────────────────────────────────────
+        // ─── One-time layout ──────────────────────────────────────────────────
 
         private void BuildLayout()
         {
             SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             MouseFilter = MouseFilterEnum.Stop;
 
-            // Background
-            var bg = new ColorRect
-            {
-                Color = BgColor,
-                AnchorRight = 1f,
-                AnchorBottom = 1f,
-                MouseFilter = MouseFilterEnum.Ignore,
-            };
-            AddChild(bg);
+            AddChild(UiTheme.MakeBackdrop());
 
-            // Title
-            var title = new Label
-            {
-                Text = "Character Manager",
-                AnchorRight = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            title.AddThemeFontSizeOverride("font_size", 38);
-            title.AddThemeColorOverride("font_color", HeaderColor);
+            float top = UiTheme.PaddingTop;
+
+            var title = UiTheme.MakeLabel("Character Manager", UiTheme.Title, UiTheme.TitleFontSize);
+            title.AnchorRight = 1f;
+            title.OffsetLeft = UiTheme.PaddingH;
+            title.OffsetRight = -UiTheme.PaddingH;
+            title.OffsetTop = top;
+            title.OffsetBottom = top + UiTheme.HeaderHeight;
             AddChild(title);
 
-            // Back button
-            var backBtn = new Button
-            {
-                Text = "← Back",
-                AnchorLeft = 1f,
-                AnchorRight = 1f,
-                OffsetLeft = -190f,
-                OffsetRight = -PaddingH,
-                OffsetTop = PaddingTop,
-                OffsetBottom = PaddingTop + HeaderHeight,
-            };
-            backBtn.AddThemeFontSizeOverride("font_size", 20);
+            var backBtn = UiTheme.MakeButton("← Back", null, 120f);
+            backBtn.AnchorLeft = 1f;
+            backBtn.AnchorRight = 1f;
+            backBtn.OffsetLeft = -120f - UiTheme.PaddingH;
+            backBtn.OffsetRight = -UiTheme.PaddingH;
+            backBtn.OffsetTop = top;
+            backBtn.OffsetBottom = top + UiTheme.HeaderHeight;
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
-            // Column header bar
-            float colY = PaddingTop + HeaderHeight + 12f;
-            var colPanel = MakePanel(new Color(0.18f, 0.18f, 0.22f, 0.9f));
+            // Column header
+            float colY = top + UiTheme.HeaderHeight + 8f;
+            var colPanel = UiTheme.MakePanel(UiTheme.PanelBg, border: false);
             colPanel.AnchorRight = 1f;
-            colPanel.OffsetLeft = PaddingH;
-            colPanel.OffsetRight = -PaddingH;
+            colPanel.OffsetLeft = UiTheme.PaddingH;
+            colPanel.OffsetRight = -UiTheme.PaddingH;
             colPanel.OffsetTop = colY;
             colPanel.OffsetBottom = colY + ColRowHeight;
             AddChild(colPanel);
 
-            var colHbox = AddHbox(colPanel, 12);
-            AddColLabel(colHbox, "Character", SizeFlags.ExpandFill, 17);
-            foreach (var txt in new[] { "Stats Shown", "In Select", "Stats", "History", "Analytics" })
-                AddColLabel(colHbox, txt, SizeFlags.ShrinkCenter, 14, 100f);
+            var colHbox = MakeHbox(colPanel, 10);
+            // Spacer matching the portrait column so headers line up with row content.
+            colHbox.AddChild(new Control { CustomMinimumSize = new Vector2(PortraitSize, 0f) });
+            AddColLabel(colHbox, "Character", SizeFlags.ExpandFill);
+            AddColLabel(colHbox, "Stats", SizeFlags.ShrinkCenter, ColWidth);
+            AddColLabel(colHbox, "In Select", SizeFlags.ShrinkCenter, ColWidth);
+            AddColLabel(colHbox, "W/L", SizeFlags.ShrinkCenter, StatsColWidth);
+            AddColLabel(colHbox, "History", SizeFlags.ShrinkCenter, ColWidth);
+            AddColLabel(colHbox, "Analytics", SizeFlags.ShrinkCenter, ColWidth);
 
-            // Scroll container for character rows
-            float scrollY = colY + ColRowHeight + 6f;
+            // Scrollable rows
+            float scrollY = colY + ColRowHeight + 4f;
             var scroll = new ScrollContainer
             {
                 AnchorRight = 1f,
                 AnchorBottom = 1f,
-                OffsetLeft = PaddingH,
-                OffsetRight = -PaddingH,
+                OffsetLeft = UiTheme.PaddingH,
+                OffsetRight = -UiTheme.PaddingH,
                 OffsetTop = scrollY,
-                OffsetBottom = -40f,
+                OffsetBottom = -UiTheme.PaddingTop,
             };
             AddChild(scroll);
 
-            _rowContainer = new VBoxContainer();
-            _rowContainer.AddThemeConstantOverride("separation", RowSpacing);
-            _rowContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            _rowContainer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            _rowContainer.AddThemeConstantOverride("separation", UiTheme.RowSpacing);
             scroll.AddChild(_rowContainer);
         }
 
-        // ─── Row population (called each OnSubmenuOpened) ─────────────────────
+        // ─── Rows ─────────────────────────────────────────────────────────────
 
         private void PopulateRows()
         {
@@ -172,27 +120,24 @@ namespace CharacterManager.UI
             foreach (Node child in _rowContainer.GetChildren())
                 child.QueueFree();
 
-            var characters = CharacterHelper.GetAllCharacters();
             var progress = SaveManager.Instance.Progress;
-
-            foreach (var character in characters)
+            int i = 0;
+            foreach (var character in CharacterHelper.GetAllCharacters())
             {
                 bool isCustom = !CharacterHelper.IsBaseCharacter(character.Id);
-                _rowContainer.AddChild(BuildCharacterRow(character, isCustom, progress));
+                _rowContainer.AddChild(BuildCharacterRow(character, isCustom, progress, i++));
             }
         }
 
-        // ─── Per-character row ────────────────────────────────────────────────
-
-        private Control BuildCharacterRow(CharacterModel character, bool isCustom, ProgressState progress)
+        private Control BuildCharacterRow(CharacterModel character, bool isCustom, ProgressState progress, int index)
         {
-            var panel = MakePanel(isCustom
-                ? new Color(0.12f, 0.12f, 0.19f, 0.9f)
-                : new Color(0.15f, 0.16f, 0.21f, 0.9f));
-            panel.CustomMinimumSize = new Vector2(0f, RowHeight);
-            panel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            var panel = UiTheme.MakePanel(index % 2 == 0 ? UiTheme.RowBg : UiTheme.RowAltBg);
+            panel.CustomMinimumSize = new Vector2(0f, UiTheme.RowHeight);
 
-            var hbox = AddHbox(panel, 12);
+            var hbox = MakeHbox(panel, 10);
+
+            // Portrait (guarded — some custom characters may not provide one).
+            hbox.AddChild(MakePortrait(character));
 
             // Name + source
             var nameCol = new VBoxContainer
@@ -200,140 +145,128 @@ namespace CharacterManager.UI
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
                 SizeFlagsVertical = SizeFlags.ShrinkCenter,
             };
-            // Clickable name → opens the M2 info card. Flat button styled to read like a heading.
+            nameCol.AddThemeConstantOverride("separation", 0);
+
             var nameBtn = new Button
             {
                 Text = character.Title.GetFormattedText(),
                 Flat = true,
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                Alignment = HorizontalAlignment.Left,
                 TooltipText = "View details",
             };
-            nameBtn.Alignment = HorizontalAlignment.Left;
-            nameBtn.AddThemeFontSizeOverride("font_size", 21);
-            nameBtn.AddThemeColorOverride("font_color", new Color(0.95f, 0.9f, 0.8f));
-            nameBtn.AddThemeColorOverride("font_hover_color", HeaderColor);
+            nameBtn.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize + 3);
+            nameBtn.AddThemeColorOverride("font_color", UiTheme.Body);
+            nameBtn.AddThemeColorOverride("font_hover_color", UiTheme.Title);
             nameBtn.Pressed += () => OpenInfo(character);
             nameCol.AddChild(nameBtn);
 
             string sourceText = isCustom ? GetSourceText(character) : "Base game";
-            var sourceLbl = new Label { Text = sourceText };
-            sourceLbl.AddThemeFontSizeOverride("font_size", 13);
-            sourceLbl.AddThemeColorOverride("font_color", MutedColor);
-            nameCol.AddChild(sourceLbl);
+            nameCol.AddChild(UiTheme.MakeLabel(sourceText, UiTheme.Muted, UiTheme.SmallFontSize));
             hbox.AddChild(nameCol);
 
-            // Visibility toggle (stats screen) — custom characters only. Base characters
-            // always appear on the Compendium stats screen (the game renders them itself;
-            // our StatsGridPatch only injects custom rows), so a toggle would be meaningless.
+            // Stats-shown toggle (custom only; base always shown)
             if (isCustom)
-            {
-                bool vis = VisibilityStore.IsVisible(character.Id);
-                var visBtn = MakeColorButton(vis ? "Shown" : "Hidden", vis);
-                visBtn.Pressed += () =>
-                {
-                    bool now = VisibilityStore.Toggle(character.Id);
-                    visBtn.Text = now ? "Shown" : "Hidden";
-                    SetButtonColor(visBtn, now);
-                };
-                hbox.AddChild(visBtn);
-            }
+                hbox.AddChild(MakeToggle(VisibilityStore.IsVisible(character.Id),
+                    v => VisibilityStore.Toggle(character.Id)));
             else
-            {
-                hbox.AddChild(MakeAlwaysLabel());
-            }
+                hbox.AddChild(MakeFixedLabel("Always", UiTheme.Muted, ColWidth));
 
-            // Enable/disable in character select (custom only)
+            // In-select toggle (custom only)
             if (isCustom)
-            {
-                bool enabled = EnabledStore.IsEnabled(character.Id);
-                var enableBtn = MakeColorButton(enabled ? "Shown" : "Hidden", enabled);
-                enableBtn.Pressed += () =>
-                {
-                    bool now = EnabledStore.Toggle(character.Id);
-                    enableBtn.Text = now ? "Shown" : "Hidden";
-                    SetButtonColor(enableBtn, now);
-                };
-                hbox.AddChild(enableBtn);
-            }
+                hbox.AddChild(MakeToggle(EnabledStore.IsEnabled(character.Id),
+                    v => EnabledStore.Toggle(character.Id)));
             else
-            {
-                var disabledLbl = new Label
-                {
-                    Text = "—",
-                    CustomMinimumSize = new Vector2(100f, 0f),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    SizeFlagsVertical = SizeFlags.ShrinkCenter,
-                };
-                disabledLbl.AddThemeColorOverride("font_color", MutedColor);
-                hbox.AddChild(disabledLbl);
-            }
+                hbox.AddChild(MakeFixedLabel("—", UiTheme.Muted, ColWidth));
 
-            // Quick stats
+            // W/L
             var stats = progress.GetStatsForCharacter(character.Id);
-            string statsText = stats != null
-                ? $"W:{stats.TotalWins}\nL:{stats.TotalLosses}"
-                : "—";
-            var statsLbl = new Label
-            {
-                Text = statsText,
-                CustomMinimumSize = new Vector2(100f, 0f),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-            };
-            statsLbl.AddThemeFontSizeOverride("font_size", 15);
-            hbox.AddChild(statsLbl);
+            hbox.AddChild(MakeWinLoss(stats));
 
-            // View History button
+            // History
             bool hasHistory = stats != null && (stats.TotalWins > 0 || stats.TotalLosses > 0);
-            var histBtn = new Button
-            {
-                Text = "History",
-                CustomMinimumSize = new Vector2(100f, 0f),
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-                Disabled = !hasHistory,
-            };
-            histBtn.AddThemeFontSizeOverride("font_size", 16);
+            var histBtn = UiTheme.MakeButton("History", null, ColWidth);
+            histBtn.Disabled = !hasHistory;
             histBtn.Pressed += () => OpenFilteredRunHistory(character.Id);
             hbox.AddChild(histBtn);
 
-            // Analytics button — opens the per-character analytics drill-in (M4).
-            var analyticsBtn = new Button
-            {
-                Text = "Analytics",
-                CustomMinimumSize = new Vector2(100f, 0f),
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-            };
-            analyticsBtn.AddThemeFontSizeOverride("font_size", 16);
+            // Analytics
+            var analyticsBtn = UiTheme.MakeButton("Analytics", null, ColWidth);
             analyticsBtn.Pressed += () => OpenAnalytics(character);
             hbox.AddChild(analyticsBtn);
 
             return panel;
         }
 
-        // ─── Helpers ─────────────────────────────────────────────────────────
+        // ─── Small builders ───────────────────────────────────────────────────
 
-        /// <summary>Creates an anchored PanelContainer with rounded bg. Caller positions it.</summary>
-        private static PanelContainer MakePanel(Color bgColor)
+        private static Control MakePortrait(CharacterModel character)
         {
-            var panel = new PanelContainer();
-            var style = new StyleBoxFlat
+            var holder = new Control { CustomMinimumSize = new Vector2(PortraitSize, PortraitSize) };
+            try
             {
-                BgColor = bgColor,
-                CornerRadiusTopLeft = 6,
-                CornerRadiusTopRight = 6,
-                CornerRadiusBottomLeft = 6,
-                CornerRadiusBottomRight = 6,
-                ContentMarginLeft = 16f,
-                ContentMarginRight = 16f,
-                ContentMarginTop = 8f,
-                ContentMarginBottom = 8f,
-            };
-            panel.AddThemeStyleboxOverride("panel", style);
-            return panel;
+                var tex = character.IconTexture;
+                if (tex != null)
+                {
+                    holder.AddChild(new TextureRect
+                    {
+                        Texture = tex,
+                        ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                        StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                        AnchorRight = 1f,
+                        AnchorBottom = 1f,
+                        MouseFilter = MouseFilterEnum.Ignore,
+                    });
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Warn("[CharacterManager] portrait load failed: " + e.Message);
+            }
+            return holder;
         }
 
-        /// <summary>Adds an HBoxContainer as an ExpandFill child of parent. Returns the HBox.</summary>
-        private static HBoxContainer AddHbox(Container parent, int separation)
+        /// <summary>A Shown/Hidden toggle button. <paramref name="toggle"/> returns the new state.</summary>
+        private static Button MakeToggle(bool active, Func<bool, bool> toggle)
+        {
+            var btn = UiTheme.MakeButton(active ? "Shown" : "Hidden", active ? UiTheme.Good : UiTheme.Bad, ColWidth);
+            btn.Pressed += () =>
+            {
+                bool now = toggle(active);
+                btn.Text = now ? "Shown" : "Hidden";
+                btn.AddThemeColorOverride("font_color", now ? UiTheme.Good : UiTheme.Bad);
+                active = now;
+            };
+            return btn;
+        }
+
+        private static Control MakeWinLoss(CharacterStats? stats)
+        {
+            var box = new VBoxContainer
+            {
+                CustomMinimumSize = new Vector2(StatsColWidth, 0f),
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            };
+            box.AddThemeConstantOverride("separation", 0);
+            if (stats == null)
+            {
+                box.AddChild(UiTheme.MakeLabel("—", UiTheme.Muted, UiTheme.BodyFontSize, HorizontalAlignment.Center));
+                return box;
+            }
+            box.AddChild(UiTheme.MakeLabel($"W {stats.TotalWins}", UiTheme.Good, UiTheme.SmallFontSize + 1, HorizontalAlignment.Center));
+            box.AddChild(UiTheme.MakeLabel($"L {stats.TotalLosses}", UiTheme.Bad, UiTheme.SmallFontSize + 1, HorizontalAlignment.Center));
+            return box;
+        }
+
+        private static Label MakeFixedLabel(string text, Color color, float width)
+        {
+            var lbl = UiTheme.MakeLabel(text, color, UiTheme.BodyFontSize, HorizontalAlignment.Center);
+            lbl.CustomMinimumSize = new Vector2(width, 0f);
+            lbl.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+            return lbl;
+        }
+
+        private static HBoxContainer MakeHbox(Container parent, int separation)
         {
             var hbox = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
             hbox.AddThemeConstantOverride("separation", separation);
@@ -341,99 +274,44 @@ namespace CharacterManager.UI
             return hbox;
         }
 
-        private static void AddColLabel(HBoxContainer parent, string text, SizeFlags horizontal, int fontSize, float minWidth = 0f)
+        private static void AddColLabel(HBoxContainer parent, string text, SizeFlags horizontal, float minWidth = 0f)
         {
-            var lbl = new Label
-            {
-                Text = text,
-                SizeFlagsHorizontal = horizontal,
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-                HorizontalAlignment = horizontal == SizeFlags.ExpandFill
-                    ? HorizontalAlignment.Left
-                    : HorizontalAlignment.Center,
-            };
-            if (minWidth > 0f)
-                lbl.CustomMinimumSize = new Vector2(minWidth, 0f);
-            lbl.AddThemeFontSizeOverride("font_size", fontSize);
-            lbl.AddThemeColorOverride("font_color", MutedColor);
+            var lbl = UiTheme.MakeLabel(text, UiTheme.Muted, UiTheme.SmallFontSize,
+                horizontal == SizeFlags.ExpandFill ? HorizontalAlignment.Left : HorizontalAlignment.Center);
+            lbl.SizeFlagsHorizontal = horizontal;
+            lbl.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+            if (minWidth > 0f) lbl.CustomMinimumSize = new Vector2(minWidth, 0f);
             parent.AddChild(lbl);
-        }
-
-        private static Button MakeColorButton(string text, bool active)
-        {
-            var btn = new Button
-            {
-                Text = text,
-                CustomMinimumSize = new Vector2(100f, 0f),
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-            };
-            SetButtonColor(btn, active);
-            return btn;
-        }
-
-        private static void SetButtonColor(Button btn, bool active)
-        {
-            btn.AddThemeColorOverride("font_color", active ? GreenColor : RedColor);
-        }
-
-        /// <summary>A muted "Always" label sized like the toggle buttons — used for base
-        /// characters whose stats are always shown and can't be toggled.</summary>
-        private static Label MakeAlwaysLabel()
-        {
-            var lbl = new Label
-            {
-                Text = "Always",
-                CustomMinimumSize = new Vector2(100f, 0f),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-            };
-            lbl.AddThemeColorOverride("font_color", MutedColor);
-            return lbl;
         }
 
         private static string GetSourceText(CharacterModel character)
         {
             var mod = CharacterHelper.GetSourceMod(character);
-            return mod != null
-                ? $"{mod.manifest.name} v{mod.manifest.version}"
-                : "Unknown mod";
+            return mod != null ? $"{mod.manifest.name} v{mod.manifest.version}" : "Unknown mod";
         }
 
-        /// <summary>Pushes the per-character info card (M2). One reused instance, like the
-        /// Compendium reuses this manager screen — set the character, then Push.</summary>
+        // ─── Drill-ins ────────────────────────────────────────────────────────
+
         private void OpenInfo(CharacterModel character)
         {
-            if (_stack == null)
-            {
-                Log.Error("[CharacterManager] _stack is null — cannot open info card.");
-                return;
-            }
-
+            if (_stack == null) { Log.Error("[CharacterManager] _stack is null — cannot open info card."); return; }
             if (_infoScreen == null || !GodotObject.IsInstanceValid(_infoScreen))
             {
                 _infoScreen = new CharacterInfoScreen { Visible = false };
                 _stack.AddChild(_infoScreen);
             }
-
             _infoScreen.SetCharacter(character);
             _stack.Push(_infoScreen);
         }
 
-        /// <summary>Pushes the per-character analytics screen (M4). One reused instance.</summary>
         private void OpenAnalytics(CharacterModel character)
         {
-            if (_stack == null)
-            {
-                Log.Error("[CharacterManager] _stack is null — cannot open analytics.");
-                return;
-            }
-
+            if (_stack == null) { Log.Error("[CharacterManager] _stack is null — cannot open analytics."); return; }
             if (_analyticsScreen == null || !GodotObject.IsInstanceValid(_analyticsScreen))
             {
                 _analyticsScreen = new CharacterAnalyticsScreen { Visible = false };
                 _stack.AddChild(_analyticsScreen);
             }
-
             _analyticsScreen.SetCharacter(character);
             _stack.Push(_analyticsScreen);
         }

@@ -22,16 +22,16 @@ namespace CharacterManager.UI
     /// </summary>
     public class CharacterAnalyticsScreen : NSubmenu
     {
-        // ─── Layout constants ────────────────────────────────────────────────
-        private const float PaddingH = 80f;
-        private const float PaddingTop = 40f;
-        private const float HeaderHeight = 72f;
+        // ─── Layout constants (M6: compact, game palette via UiTheme) ─────────
+        private const float PaddingH = UiTheme.PaddingH;
+        private const float PaddingTop = UiTheme.PaddingTop;
+        private const float HeaderHeight = UiTheme.HeaderHeight;
 
-        private static readonly Color BgColor = new Color(0.08f, 0.08f, 0.12f, 0.98f);
-        private static readonly Color HeaderColor = new Color(0.85f, 0.72f, 0.4f);
-        private static readonly Color MutedColor = new Color(0.55f, 0.55f, 0.6f);
-        private static readonly Color BodyColor = new Color(0.9f, 0.88f, 0.82f);
-        private static readonly Color SectionColor = new Color(0.7f, 0.78f, 0.9f);
+        private static readonly Color BgColor = UiTheme.Backdrop;
+        private static readonly Color HeaderColor = UiTheme.Title;
+        private static readonly Color MutedColor = UiTheme.Muted;
+        private static readonly Color BodyColor = UiTheme.Body;
+        private static readonly Color SectionColor = UiTheme.Heading;
 
         // ─── State ───────────────────────────────────────────────────────────
         private CharacterModel? _character;
@@ -48,6 +48,7 @@ namespace CharacterManager.UI
         // ─── Godot entry point ────────────────────────────────────────────────
         public override void _Ready()
         {
+            UiTheme.ApplyGameTheme(this);
             ConnectSignals();
             BuildLayout();
         }
@@ -94,7 +95,7 @@ namespace CharacterManager.UI
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            _titleLabel.AddThemeFontSizeOverride("font_size", 38);
+            _titleLabel.AddThemeFontSizeOverride("font_size", UiTheme.TitleFontSize);
             _titleLabel.AddThemeColorOverride("font_color", HeaderColor);
             AddChild(_titleLabel);
 
@@ -109,7 +110,7 @@ namespace CharacterManager.UI
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            _subtitleLabel.AddThemeFontSizeOverride("font_size", 14);
+            _subtitleLabel.AddThemeFontSizeOverride("font_size", UiTheme.SmallFontSize);
             _subtitleLabel.AddThemeColorOverride("font_color", MutedColor);
             AddChild(_subtitleLabel);
 
@@ -123,7 +124,7 @@ namespace CharacterManager.UI
                 OffsetTop = PaddingTop,
                 OffsetBottom = PaddingTop + HeaderHeight,
             };
-            backBtn.AddThemeFontSizeOverride("font_size", 20);
+            backBtn.AddThemeFontSizeOverride("font_size", UiTheme.ButtonFontSize);
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
@@ -139,7 +140,7 @@ namespace CharacterManager.UI
                 OffsetBottom = PaddingTop + HeaderHeight,
                 TooltipText = "Write this character's stats to JSON + CSV",
             };
-            exportBtn.AddThemeFontSizeOverride("font_size", 20);
+            exportBtn.AddThemeFontSizeOverride("font_size", UiTheme.ButtonFontSize);
             exportBtn.Pressed += OnExport;
             AddChild(exportBtn);
 
@@ -157,7 +158,7 @@ namespace CharacterManager.UI
                 AutowrapMode = TextServer.AutowrapMode.Off,
                 ClipText = true,
             };
-            _statusLabel.AddThemeFontSizeOverride("font_size", 13);
+            _statusLabel.AddThemeFontSizeOverride("font_size", UiTheme.SmallFontSize);
             _statusLabel.AddThemeColorOverride("font_color", SectionColor);
             AddChild(_statusLabel);
 
@@ -324,12 +325,12 @@ namespace CharacterManager.UI
                 line.AddThemeConstantOverride("separation", 12);
 
                 var l = new Label { Text = label, CustomMinimumSize = new Vector2(220f, 0f) };
-                l.AddThemeFontSizeOverride("font_size", 16);
+                l.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
                 l.AddThemeColorOverride("font_color", MutedColor);
                 line.AddChild(l);
 
                 var v = new Label { Text = value, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-                v.AddThemeFontSizeOverride("font_size", 16);
+                v.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
                 v.AddThemeColorOverride("font_color", BodyColor);
                 line.AddChild(v);
 
@@ -353,7 +354,7 @@ namespace CharacterManager.UI
                 foreach (var item in items)
                 {
                     var lbl = new Label { Text = "•  " + item, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-                    lbl.AddThemeFontSizeOverride("font_size", 16);
+                    lbl.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
                     lbl.AddThemeColorOverride("font_color", BodyColor);
                     body.AddChild(lbl);
                 }
@@ -370,7 +371,7 @@ namespace CharacterManager.UI
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
             };
-            lbl.AddThemeFontSizeOverride("font_size", 16);
+            lbl.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
             lbl.AddThemeColorOverride("font_color", BodyColor);
             body.AddChild(lbl);
             _contentContainer!.AddChild(panel);
@@ -378,32 +379,17 @@ namespace CharacterManager.UI
 
         private static PanelContainer MakeSectionPanel(string heading, out VBoxContainer body)
         {
-            var panel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            var style = new StyleBoxFlat
-            {
-                BgColor = new Color(0.13f, 0.13f, 0.18f, 0.9f),
-                CornerRadiusTopLeft = 6,
-                CornerRadiusTopRight = 6,
-                CornerRadiusBottomLeft = 6,
-                CornerRadiusBottomRight = 6,
-                ContentMarginLeft = 18f,
-                ContentMarginRight = 18f,
-                ContentMarginTop = 12f,
-                ContentMarginBottom = 14f,
-            };
-            panel.AddThemeStyleboxOverride("panel", style);
+            var panel = UiTheme.MakePanel(UiTheme.PanelBg);
 
             var outer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            outer.AddThemeConstantOverride("separation", 8);
+            outer.AddThemeConstantOverride("separation", 6);
             panel.AddChild(outer);
 
-            var headingLbl = new Label { Text = heading };
-            headingLbl.AddThemeFontSizeOverride("font_size", 19);
-            headingLbl.AddThemeColorOverride("font_color", SectionColor);
+            var headingLbl = UiTheme.MakeLabel(heading, SectionColor, UiTheme.SectionFontSize);
             outer.AddChild(headingLbl);
 
             body = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            body.AddThemeConstantOverride("separation", 4);
+            body.AddThemeConstantOverride("separation", 3);
             outer.AddChild(body);
 
             return panel;
