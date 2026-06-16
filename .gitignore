@@ -9,3 +9,4 @@ obj/
 # Local working docs (not shared)
 CLAUDE.md
 ROADMAP.md
+*.zip
