@@ -1,11 +1,14 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using CharacterManager.Config;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 
 namespace CharacterManager.Patches
 {
@@ -101,6 +104,59 @@ namespace CharacterManager.Patches
             return c != null
                 && !CharacterHelper.IsBaseCharacter(c.Id)
                 && !EnabledStore.IsEnabled(c.Id);
+        }
+
+        // ─── Live select-screen rebuild ─────────────────────────────────────
+        // When the player toggles a character in the manager, we update the
+        // character-select screen immediately without requiring a restart.
+
+        private static NCharacterSelectScreen? _liveInstance;
+        private static readonly FieldInfo CharButtonField =
+            AccessTools.Field(typeof(NCharacterSelectScreen), "_charButtonContainer");
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(NCharacterSelectScreen), "_Ready")]
+        public static void CaptureInstance(NCharacterSelectScreen __instance)
+        {
+            _liveInstance = __instance;
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(NCharacterSelectScreen), "OnSubmenuClosed")]
+        public static void ReleaseInstance()
+        {
+            _liveInstance = null;
+        }
+
+        static CharacterSelectPatch()
+        {
+            EnabledStore.OnToggle += OnEnabledToggle;
+        }
+
+        private static void OnEnabledToggle(ModelId characterId)
+        {
+            var screen = _liveInstance;
+            if (screen == null || !GodotObject.IsInstanceValid(screen)) return;
+
+            var container = CharButtonField?.GetValue(screen) as Control;
+            if (container == null) return;
+
+            bool enabled = EnabledStore.IsEnabled(characterId);
+
+            foreach (Node child in container.GetChildren())
+            {
+                if (child.Name == characterId.Entry + "_button" && child is NCharacterSelectButton btn)
+                {
+                    btn.Visible = enabled;
+                    Log.Info($"[CharacterManager] live toggled '{characterId.Entry}' {(enabled ? "shown" : "hidden")} in character select.");
+                    return;
+                }
+            }
+
+            // RitsuLib may have reparented — try a full traversal.
+            var found = screen.FindChild(characterId.Entry + "_button", recursive: true, owned: false);
+            if (found is NCharacterSelectButton btn2)
+                btn2.Visible = enabled;
         }
     }
 }

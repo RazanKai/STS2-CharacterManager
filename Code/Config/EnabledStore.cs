@@ -18,6 +18,8 @@ namespace CharacterManager.Config
     /// </summary>
     public static class EnabledStore
     {
+        /// <summary>Fires after a character is toggled so live UI can react.</summary>
+        public static event Action<ModelId>? OnToggle;
         private static readonly Dictionary<string, bool> _choices = new();
         private static bool _loaded;
 
@@ -72,6 +74,7 @@ namespace CharacterManager.Config
             bool now = !IsEnabled(id, defaultEnabled);
             _choices[id.ToString()] = now;
             Save();
+            OnToggle?.Invoke(id);
             return now;
         }
 

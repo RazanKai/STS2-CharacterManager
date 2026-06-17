@@ -270,9 +270,9 @@ namespace CharacterManager.UI
         }
 
         /// <summary>
-        /// A bordered frame holding the character's large portrait. The image is fit fully inside
-        /// (KeepAspectCentered) over a dark matte, so it reads as an intentional framed portrait
-        /// regardless of the source asset's aspect, with no extra cropping of the character.
+        /// A bordered frame holding the character's live animated visuals (via CreateVisuals) or,
+        /// as a fallback, the large static character-select portrait. The live visuals are scaled
+        /// to fit the frame; the static image uses KeepAspectCentered over a dark matte.
         /// </summary>
         private static Control BuildImageFrame(CharacterModel character)
         {
@@ -294,6 +294,11 @@ namespace CharacterManager.UI
             };
             frame.AddThemeStyleboxOverride("panel", style);
 
+            // Try live animated visuals first
+            if (TryAttachLiveVisuals(frame, character))
+                return frame;
+
+            // Fallback: static portrait
             var img = TryGetLargePortrait(character);
             if (img != null)
             {
@@ -312,6 +317,36 @@ namespace CharacterManager.UI
                 frame.AddChild(UiTheme.MakeLabel("(no image)", UiTheme.Muted, UiTheme.BodyFontSize, HorizontalAlignment.Center));
             }
             return frame;
+        }
+
+        /// <summary>
+        /// Attempts to instantiate the character's live combat visuals (<see cref="CharacterModel.CreateVisuals"/>)
+        /// and add them to the frame, scaled to fit. Returns true on success.
+        /// </summary>
+        private static bool TryAttachLiveVisuals(PanelContainer frame, CharacterModel character)
+        {
+            try
+            {
+                var visuals = character.CreateVisuals();
+                if (visuals == null || !GodotObject.IsInstanceValid(visuals)) return false;
+
+                // Scale the visuals to fit within the frame height.
+                // DefaultScale is 1.0 (combat size, roughly 400px); scale to ~360px.
+                float combatHeight = 400f;
+                float scale = DetailImageHeight / combatHeight;
+                visuals.SetScaleAndHue(scale * visuals.DefaultScale, 0f);
+
+                // Offset past the border (2px) so the sprite doesn't overlap it.
+                float borderOff = 2f;
+                visuals.Position = new Vector2(borderOff, borderOff);
+                frame.AddChild(visuals);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("[CharacterManager] CreateVisuals failed for " + character.Id.Entry + ": " + e.Message);
+                return false;
+            }
         }
 
         /// <summary>The large character-select portrait, falling back to the small icon, then null.</summary>

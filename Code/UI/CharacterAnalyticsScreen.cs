@@ -40,6 +40,10 @@ namespace CharacterManager.UI
         private Label? _statusLabel;
         private VBoxContainer? _contentContainer;
 
+        private CharacterAnalytics? _fullAgg;         // loaded once per open
+        private GameModeFilter _currentFilter = GameModeFilter.All;
+        private readonly List<(GameModeFilter Mode, Button Btn)> _filterBtns = new();
+
         protected override Control? InitialFocusedControl => null;
 
         /// <summary>Sets the character to analyze. Call before pushing this screen.</summary>
@@ -112,7 +116,11 @@ namespace CharacterManager.UI
             UiTheme.PlaceInColumn(_statusLabel, PaddingTop + HeaderHeight + 12f, 20f);
             AddChild(_statusLabel);
 
-            float scrollY = PaddingTop + HeaderHeight + 34f;
+            // Game-mode filter bar
+            float filterY = PaddingTop + HeaderHeight + 34f;
+            BuildFilterBar(filterY);
+
+            float scrollY = filterY + 34f;
             var scroll = new ScrollContainer();
             UiTheme.PlaceColumnStretch(scroll, scrollY, UiTheme.PaddingTop);
             AddChild(scroll);
@@ -122,14 +130,112 @@ namespace CharacterManager.UI
             scroll.AddChild(_contentContainer);
         }
 
-        // ─── Content (rebuilt each open) ──────────────────────────────────────
+        private void BuildFilterBar(float top)
+        {
+            _filterBtns.Clear();
+            var bar = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            UiTheme.PlaceInColumn(bar, top, 28f);
+            AddChild(bar);
 
-        private void PopulateContent()
+            foreach (var mode in new[] { GameModeFilter.All, GameModeFilter.Standard, GameModeFilter.Custom, GameModeFilter.Daily })
+            {
+                var label = mode switch
+                {
+                    GameModeFilter.All => "All",
+                    GameModeFilter.Standard => "Standard",
+                    GameModeFilter.Custom => "Custom",
+                    GameModeFilter.Daily => "Daily",
+                    _ => "All",
+                };
+
+                var btn = UiTheme.MakeButton(label, null, 80f);
+                RefreshFilterButton(btn, mode);
+                btn.Pressed += () => SetFilter(mode);
+                bar.AddChild(btn);
+                _filterBtns.Add((mode, btn));
+            }
+        }
+
+        private void RefreshFilterButton(Button btn, GameModeFilter mode)
+        {
+            bool isSelected = mode == _currentFilter;
+            btn.AddThemeColorOverride("font_color", isSelected ? BodyColor : MutedColor);
+            btn.Modulate = isSelected ? new Color(1f, 1f, 1f, 1f) : new Color(1f, 1f, 1f, 0.5f);
+        }
+
+        private void SetFilter(GameModeFilter filter)
+        {
+            _currentFilter = filter;
+            foreach (var (mode, btn) in _filterBtns)
+                RefreshFilterButton(btn, mode);
+            UpdateDisplay();
+        }
+
+        /// <summary>
+        /// Rebuilds the content area according to the current filter, using the already-loaded
+        /// full aggregate (<see cref="_fullAgg"/>).
+        /// </summary>
+        private void UpdateDisplay()
         {
             if (_contentContainer == null) return;
             foreach (Node child in _contentContainer.GetChildren())
                 child.QueueFree();
 
+            var c = _character;
+            if (c == null) return;
+
+            var stats = GetStats(c);
+            var full = _fullAgg;
+
+            if (stats == null && (full == null || full.Total == 0))
+            {
+                AddTextSection("Summary",
+                    "No recorded runs for this character yet. (Run history may be disabled or pruned.)");
+                return;
+            }
+
+            GameModeFilter filter = _currentFilter;
+
+            // Official Standard summary (always shown, from CharacterStats).
+            if (stats != null)
+                AddSummarySection(stats);
+
+            // Filtered run-history view.
+            var agg = (full != null && filter != GameModeFilter.All)
+                ? full.GetFiltered(filter)
+                : full;
+
+            if (agg != null && agg.Total > 0)
+            {
+                if (filter == GameModeFilter.All)
+                {
+                    // Show separate Custom/Daily section only in All view.
+                    if (full!.CustomTotal > 0)
+                        AddCustomDailySection(full);
+                }
+
+                string filterSuffix = filter == GameModeFilter.All ? "all runs" : $"{filter} runs";
+                AddRunDetailsSection(agg, filterSuffix);
+                AddAscensionBars(agg, filterSuffix);
+                AddActBars(agg, filterSuffix);
+            }
+            else if (agg == null || agg.Total == 0)
+            {
+                AddTextSection("Summary", $"No {filter.ToString().ToLowerInvariant()} runs recorded.");
+            }
+        }
+
+        // ─── Content (rebuilt each open) ──────────────────────────────────────
+
+        private static CharacterStats? GetStats(CharacterModel c)
+        {
+            try { return SaveManager.Instance.Progress?.GetStatsForCharacter(c.Id); }
+            catch (Exception e) { Log.Warn("[CharacterManager] GetStatsForCharacter failed: " + e.Message); }
+            return null;
+        }
+
+        private void PopulateContent()
+        {
             var c = _character;
             if (c == null)
             {
@@ -141,36 +247,10 @@ namespace CharacterManager.UI
             if (_subtitleLabel != null) _subtitleLabel.Text = "Analytics";
             if (_statusLabel != null) _statusLabel.Text = ""; // clear any prior export message
 
-            // Official stats (Standard runs only — the game excludes Custom/Daily from these).
-            CharacterStats? stats = null;
-            try { stats = SaveManager.Instance.Progress?.GetStatsForCharacter(c.Id); }
-            catch (Exception e) { Log.Warn("[CharacterManager] GetStatsForCharacter failed: " + e.Message); }
-
-            // Full run-history aggregate (all game modes), with per-mode splits.
-            var agg = CharacterAnalytics.Compute(c.Id);
-
-            if (stats == null && agg.Total == 0)
-            {
-                AddTextSection("Summary",
-                    "No recorded runs for this character yet. (Run history may be disabled or pruned.)");
-                return;
-            }
-
-            // 1) Official summary — Standard runs, matches the manager list and the game's own stats.
-            AddSummarySection(stats);
-
-            // 2) Custom / Daily runs — recorded in run history but NOT counted by official stats.
-            if (agg.CustomTotal > 0)
-                AddCustomDailySection(agg);
-
-            if (agg.Total > 0)
-            {
-                // 3) Mode-agnostic run details (all runs).
-                AddRunDetailsSection(agg);
-                // 4) Breakdowns across all runs.
-                AddAscensionBars(agg);
-                AddActBars(agg);
-            }
+            // Load full aggregate once.
+            _fullAgg = CharacterAnalytics.Compute(c.Id);
+            _currentFilter = GameModeFilter.All;
+            UpdateDisplay();
         }
 
         // ─── Bar sections (M6 cont.: fill the page with the data we already have) ──
@@ -242,10 +322,10 @@ namespace CharacterManager.UI
             _contentContainer!.AddChild(panel);
         }
 
-        /// <summary>Mode-agnostic run details across all recorded runs (not win/loss tallies).</summary>
-        private void AddRunDetailsSection(CharacterAnalytics agg)
+        /// <summary>Run details across recorded runs (not win/loss tallies).</summary>
+        private void AddRunDetailsSection(CharacterAnalytics agg, string label)
         {
-            var panel = MakeSectionPanel($"Run Details  (all {agg.Total} run{(agg.Total == 1 ? "" : "s")})", out var body);
+            var panel = MakeSectionPanel($"Run Details  ({label}, {agg.Total} run{(agg.Total == 1 ? "" : "s")})", out var body);
 
             int maxAsc = 0;
             foreach (var k in agg.PerAscension.Keys) maxAsc = Math.Max(maxAsc, k);
@@ -291,9 +371,9 @@ namespace CharacterManager.UI
             body.AddChild(grid);
         }
 
-        private void AddAscensionBars(CharacterAnalytics agg)
+        private void AddAscensionBars(CharacterAnalytics agg, string label)
         {
-            var panel = MakeSectionPanel("By Ascension  (all runs)", out var body);
+            var panel = MakeSectionPanel($"By Ascension  ({label})", out var body);
             var keys = new List<int>(agg.PerAscension.Keys);
             keys.Sort();
             int maxGames = 1;
@@ -308,9 +388,9 @@ namespace CharacterManager.UI
             _contentContainer!.AddChild(panel);
         }
 
-        private void AddActBars(CharacterAnalytics agg)
+        private void AddActBars(CharacterAnalytics agg, string label)
         {
-            var panel = MakeSectionPanel("Act Reached Distribution  (all runs)", out var body);
+            var panel = MakeSectionPanel($"Act Reached Distribution  ({label})", out var body);
             var keys = new List<int>(agg.ActReached.Keys);
             keys.Sort();
             int maxCount = 1;

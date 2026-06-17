@@ -7,6 +7,8 @@ using MegaCrit.Sts2.Core.Saves;
 
 namespace CharacterManager.Analytics
 {
+    public enum GameModeFilter { All, Standard, Custom, Daily }
+
     /// <summary>One run's worth of fields, extracted from a <see cref="RunHistory"/> file.</summary>
     public sealed class RunSummary
     {
@@ -18,6 +20,7 @@ namespace CharacterManager.Analytics
         public float RunTime;        // seconds
         public int ActsReached;
         public int FloorsReached;
+        public GameMode GameMode;    // which game mode this run was in
     }
 
     /// <summary>
@@ -118,6 +121,7 @@ namespace CharacterManager.Analytics
                         RunTime = h.RunTime,
                         ActsReached = actsReached,
                         FloorsReached = floors,
+                        GameMode = h.GameMode,
                     });
                 }
                 catch (Exception e)
@@ -126,6 +130,47 @@ namespace CharacterManager.Analytics
                 }
             }
             return a;
+        }
+
+        /// <summary>
+        /// Returns a new aggregate containing only runs matching the given filter mode.
+        /// Recomputes per-ascension/act distributions from the filtered run list without
+        /// re-loading any files.
+        /// </summary>
+        public CharacterAnalytics GetFiltered(GameModeFilter filter)
+        {
+            var r = new CharacterAnalytics();
+            foreach (var run in Runs)
+            {
+                if (!ModeMatchesFilter(run.GameMode, filter)) continue;
+                r.Total++;
+                if (run.Win) r.Wins++;
+                else if (run.Abandoned) r.Abandoned++;
+                else r.Deaths++;
+                r.SumRunTime += run.RunTime;
+                if (run.RunTime > r.MaxRunTime) r.MaxRunTime = run.RunTime;
+                if (run.Win && (r.FastestWin < 0 || run.RunTime < r.FastestWin))
+                    r.FastestWin = run.RunTime;
+                if (run.ActsReached > r.MaxAct) r.MaxAct = run.ActsReached;
+                if (!r.ActReached.ContainsKey(run.ActsReached)) r.ActReached[run.ActsReached] = 0;
+                r.ActReached[run.ActsReached]++;
+                if (run.FloorsReached > r.MaxFloor) r.MaxFloor = run.FloorsReached;
+                var cur = r.PerAscension.TryGetValue(run.Ascension, out var v) ? v : (0, 0);
+                r.PerAscension[run.Ascension] = run.Win ? (cur.Item1 + 1, cur.Item2) : (cur.Item1, cur.Item2 + 1);
+            }
+            return r;
+        }
+
+        private static bool ModeMatchesFilter(GameMode mode, GameModeFilter filter)
+        {
+            return filter switch
+            {
+                GameModeFilter.All => true,
+                GameModeFilter.Standard => mode == GameMode.Standard,
+                GameModeFilter.Custom => mode == GameMode.Custom,
+                GameModeFilter.Daily => mode == GameMode.Daily,
+                _ => true,
+            };
         }
     }
 }
