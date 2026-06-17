@@ -142,6 +142,9 @@ namespace CharacterManager.UI
             // Starting deck (grouped with counts)
             AddListSection("Starting Deck", GroupDeck(c));
 
+            // Deck composition by card type (bars)
+            AddDeckComposition(c);
+
             // Starting relics
             var relics = new List<string>();
             try
@@ -197,6 +200,62 @@ namespace CharacterManager.UI
                 result.Add(counts[name] > 1 ? $"{name}  ×{counts[name]}" : name);
             return result;
         }
+
+        // ─── Deck composition (M6 cont.: bars by card type to fill the page) ──
+
+        private void AddDeckComposition(CharacterModel c)
+        {
+            var comp = GroupDeckByType(c);
+            if (comp.Count == 0) return;
+
+            int total = 0, max = 1;
+            foreach (var (_, n) in comp) { total += n; max = Math.Max(max, n); }
+
+            var panel = MakeSectionPanel($"Deck Composition  ({total} cards)", out var body);
+            foreach (var (type, n) in comp)
+            {
+                var segs = new (Color, float)[] { (TypeColor(type), n) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, max - n));
+                body.AddChild(UiTheme.MakeBarRow(type, 120f, bar, n.ToString(), 60f));
+            }
+            _contentContainer!.AddChild(panel);
+        }
+
+        /// <summary>Counts the starting deck by card type, in canonical type order.</summary>
+        private static List<(string type, int count)> GroupDeckByType(CharacterModel c)
+        {
+            var counts = new Dictionary<string, int>();
+            try
+            {
+                if (c.StartingDeck != null)
+                {
+                    foreach (var card in c.StartingDeck)
+                    {
+                        string t;
+                        try { t = card.Type.ToString(); }
+                        catch { t = "Other"; }
+                        counts[t] = counts.TryGetValue(t, out var n) ? n + 1 : 1;
+                    }
+                }
+            }
+            catch (Exception e) { Log.Error("[CharacterManager] Failed reading deck types: " + e.Message); }
+
+            var result = new List<(string, int)>();
+            foreach (var t in new[] { "Attack", "Skill", "Power", "Status", "Curse" })
+                if (counts.TryGetValue(t, out var n)) { result.Add((t, n)); counts.Remove(t); }
+            foreach (var kv in counts) result.Add((kv.Key, kv.Value));
+            return result;
+        }
+
+        private static Color TypeColor(string type) => type switch
+        {
+            "Attack" => new Color("ff6b5e"),
+            "Skill" => UiTheme.Heading,
+            "Power" => UiTheme.Title,
+            "Status" => UiTheme.Muted,
+            "Curse" => new Color("9b6bd6"),
+            _ => UiTheme.Body,
+        };
 
         private static string BuildSourceText(CharacterModel c)
         {

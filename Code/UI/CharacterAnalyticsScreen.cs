@@ -141,79 +141,188 @@ namespace CharacterManager.UI
             if (_subtitleLabel != null) _subtitleLabel.Text = "Analytics";
             if (_statusLabel != null) _statusLabel.Text = ""; // clear any prior export message
 
-            // ── Section 1: lifetime summary from CharacterStats ──────────────
+            // Official stats (Standard runs only — the game excludes Custom/Daily from these).
             CharacterStats? stats = null;
             try { stats = SaveManager.Instance.Progress?.GetStatsForCharacter(c.Id); }
             catch (Exception e) { Log.Warn("[CharacterManager] GetStatsForCharacter failed: " + e.Message); }
 
-            if (stats == null)
-            {
-                AddTextSection("Summary", "No recorded stats for this character yet.");
-            }
-            else
-            {
-                int w = stats.TotalWins, l = stats.TotalLosses;
-                var summary = new List<(string, string)>
-                {
-                    ("Wins", w.ToString()),
-                    ("Losses", l.ToString()),
-                    ("Win rate", WinRate(w, l)),
-                    ("Max ascension", stats.MaxAscension.ToString()),
-                    ("Preferred ascension", stats.PreferredAscension.ToString()),
-                    ("Best win streak", stats.BestWinStreak.ToString()),
-                    ("Current win streak", stats.CurrentWinStreak.ToString()),
-                    ("Fastest win", stats.FastestWinTime >= 0 ? FormatDuration(stats.FastestWinTime) : "—"),
-                    ("Total playtime", FormatDuration(stats.Playtime)),
-                    ("Badges earned", stats.Badges != null ? stats.Badges.Count.ToString() : "0"),
-                };
-                AddStatsSection("Summary", summary);
-            }
-
-            // ── Sections 2–4: aggregates parsed from run-history files ───────
+            // Full run-history aggregate (all game modes), with per-mode splits.
             var agg = CharacterAnalytics.Compute(c.Id);
-            if (agg.Total == 0)
+
+            if (stats == null && agg.Total == 0)
             {
-                AddTextSection("Run History",
-                    "No run-history files found for this character. (Stats above still reflect " +
-                    "lifetime totals; run history may be disabled or pruned.)");
+                AddTextSection("Summary",
+                    "No recorded runs for this character yet. (Run history may be disabled or pruned.)");
                 return;
             }
 
-            var runRows = new List<(string, string)>
+            // 1) Official summary — Standard runs, matches the manager list and the game's own stats.
+            AddSummarySection(stats);
+
+            // 2) Custom / Daily runs — recorded in run history but NOT counted by official stats.
+            if (agg.CustomTotal > 0)
+                AddCustomDailySection(agg);
+
+            if (agg.Total > 0)
+            {
+                // 3) Mode-agnostic run details (all runs).
+                AddRunDetailsSection(agg);
+                // 4) Breakdowns across all runs.
+                AddAscensionBars(agg);
+                AddActBars(agg);
+            }
+        }
+
+        // ─── Bar sections (M6 cont.: fill the page with the data we already have) ──
+
+        private const float BarLabelWidth = 170f;
+        private const float BarValueWidth = 90f;
+
+        /// <summary>Official, Standard-only summary from CharacterStats (matches the manager list).</summary>
+        private void AddSummarySection(CharacterStats? stats)
+        {
+            var panel = MakeSectionPanel("Summary  (Standard runs)", out var body);
+
+            int w = stats?.TotalWins ?? 0;
+            int l = stats?.TotalLosses ?? 0;
+
+            var segs = new (Color, float)[] { (UiTheme.Good, w), (UiTheme.Bad, l) };
+            var bar = UiTheme.MakeBarTrack(18f, segs, 0f);
+            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(w, l), BarValueWidth));
+
+            // Spacer between the bar and the grid.
+            body.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 4f), MouseFilter = MouseFilterEnum.Ignore });
+
+            var rows = new List<(string, string)>
+            {
+                ("Wins", w.ToString()),
+                ("Losses", l.ToString()),
+                ("Max ascension", (stats?.MaxAscension ?? 0).ToString()),
+                ("Preferred ascension", (stats?.PreferredAscension ?? 0).ToString()),
+                ("Best win streak", (stats?.BestWinStreak ?? 0).ToString()),
+                ("Current win streak", (stats?.CurrentWinStreak ?? 0).ToString()),
+                ("Fastest win", stats != null && stats.FastestWinTime >= 0 ? FormatDuration(stats.FastestWinTime) : "—"),
+                ("Total playtime", stats != null ? FormatDuration(stats.Playtime) : "—"),
+                ("Badges earned", stats?.Badges != null ? stats.Badges.Count.ToString() : "0"),
+            };
+            AddStatsGrid(body, rows, 2);
+
+            _contentContainer!.AddChild(panel);
+        }
+
+        /// <summary>Custom + Daily runs — recorded in run history but excluded from official stats.</summary>
+        private void AddCustomDailySection(CharacterAnalytics agg)
+        {
+            var panel = MakeSectionPanel("Custom / Daily Runs", out var body);
+
+            var segs = new (Color, float)[]
+            {
+                (UiTheme.Good, agg.CustomWins),
+                (UiTheme.Bad, agg.CustomDeaths),
+                (MutedColor, agg.CustomAbandoned),
+            };
+            var bar = UiTheme.MakeBarTrack(18f, segs, 0f);
+            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(agg.CustomWins, agg.CustomTotal - agg.CustomWins), BarValueWidth));
+
+            body.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 4f), MouseFilter = MouseFilterEnum.Ignore });
+
+            var rows = new List<(string, string)>
+            {
+                ("Runs", agg.CustomTotal.ToString()),
+                ("Wins", agg.CustomWins.ToString()),
+                ("Deaths", agg.CustomDeaths.ToString()),
+                ("Abandoned", agg.CustomAbandoned.ToString()),
+            };
+            AddStatsGrid(body, rows, 2);
+
+            body.AddChild(UiTheme.MakeLabel(
+                "These runs are not counted by the game's official stats.",
+                MutedColor, UiTheme.SmallFontSize));
+
+            _contentContainer!.AddChild(panel);
+        }
+
+        /// <summary>Mode-agnostic run details across all recorded runs (not win/loss tallies).</summary>
+        private void AddRunDetailsSection(CharacterAnalytics agg)
+        {
+            var panel = MakeSectionPanel($"Run Details  (all {agg.Total} run{(agg.Total == 1 ? "" : "s")})", out var body);
+
+            int maxAsc = 0;
+            foreach (var k in agg.PerAscension.Keys) maxAsc = Math.Max(maxAsc, k);
+
+            var rows = new List<(string, string)>
             {
                 ("Runs recorded", agg.Total.ToString()),
-                ("Wins", agg.Wins.ToString()),
-                ("Deaths", agg.Deaths.ToString()),
-                ("Abandoned", agg.Abandoned.ToString()),
+                ("Max ascension", maxAsc.ToString()),
                 ("Highest act reached", agg.MaxAct.ToString()),
                 ("Highest floor reached", agg.MaxFloor.ToString()),
                 ("Average run length", FormatDuration(agg.AvgRunTime)),
                 ("Longest run", FormatDuration(agg.MaxRunTime)),
                 ("Fastest clear", agg.FastestWin >= 0 ? FormatDuration(agg.FastestWin) : "—"),
             };
-            AddStatsSection($"Run History  ({agg.Total} run{(agg.Total == 1 ? "" : "s")})", runRows);
+            AddStatsGrid(body, rows, 2);
 
-            // By ascension
-            var ascLines = new List<string>();
-            var ascKeys = new List<int>(agg.PerAscension.Keys);
-            ascKeys.Sort();
-            foreach (var asc in ascKeys)
+            _contentContainer!.AddChild(panel);
+        }
+
+        /// <summary>Lays label/value pairs out in <paramref name="columns"/> equal columns to fill width.</summary>
+        private void AddStatsGrid(VBoxContainer body, List<(string label, string value)> rows, int columns)
+        {
+            var grid = new GridContainer { Columns = columns, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            grid.AddThemeConstantOverride("h_separation", 28);
+            grid.AddThemeConstantOverride("v_separation", 4);
+            foreach (var (label, value) in rows)
             {
-                var (aw, al) = agg.PerAscension[asc];
-                ascLines.Add($"Ascension {asc}:  {aw}W / {al}L");
-            }
-            AddListSection("By Ascension", ascLines);
+                var cell = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+                cell.AddThemeConstantOverride("separation", 10);
 
-            // Act reached distribution
-            var actLines = new List<string>();
-            var actKeys = new List<int>(agg.ActReached.Keys);
-            actKeys.Sort();
-            foreach (var act in actKeys)
+                var l = new Label { Text = label, CustomMinimumSize = new Vector2(170f, 0f) };
+                l.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
+                l.AddThemeColorOverride("font_color", MutedColor);
+                cell.AddChild(l);
+
+                var v = new Label { Text = value, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+                v.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
+                v.AddThemeColorOverride("font_color", BodyColor);
+                cell.AddChild(v);
+
+                grid.AddChild(cell);
+            }
+            body.AddChild(grid);
+        }
+
+        private void AddAscensionBars(CharacterAnalytics agg)
+        {
+            var panel = MakeSectionPanel("By Ascension  (all runs)", out var body);
+            var keys = new List<int>(agg.PerAscension.Keys);
+            keys.Sort();
+            int maxGames = 1;
+            foreach (var asc in keys) { var (w, l) = agg.PerAscension[asc]; maxGames = Math.Max(maxGames, w + l); }
+            foreach (var asc in keys)
+            {
+                var (w, l) = agg.PerAscension[asc];
+                var segs = new (Color, float)[] { (UiTheme.Good, w), (UiTheme.Bad, l) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxGames - (w + l)));
+                body.AddChild(UiTheme.MakeBarRow($"Ascension {asc}", BarLabelWidth, bar, $"{w}W / {l}L", BarValueWidth));
+            }
+            _contentContainer!.AddChild(panel);
+        }
+
+        private void AddActBars(CharacterAnalytics agg)
+        {
+            var panel = MakeSectionPanel("Act Reached Distribution  (all runs)", out var body);
+            var keys = new List<int>(agg.ActReached.Keys);
+            keys.Sort();
+            int maxCount = 1;
+            foreach (var act in keys) maxCount = Math.Max(maxCount, agg.ActReached[act]);
+            foreach (var act in keys)
             {
                 int count = agg.ActReached[act];
-                actLines.Add($"Reached act {act}:  {count} run{(count == 1 ? "" : "s")}");
+                var segs = new (Color, float)[] { (UiTheme.Heading, count) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxCount - count));
+                body.AddChild(UiTheme.MakeBarRow($"Reached act {act}", BarLabelWidth, bar, $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
             }
-            AddListSection("Act Reached Distribution", actLines);
+            _contentContainer!.AddChild(panel);
         }
 
         // ─── Export (M5) ─────────────────────────────────────────────────────

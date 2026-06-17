@@ -29,6 +29,10 @@ namespace CharacterManager.Analytics
     public sealed class CharacterAnalytics
     {
         public int Total, Wins, Deaths, Abandoned, MaxAct, MaxFloor;
+        // Split by game mode: only Standard runs count toward the game's official CharacterStats
+        // (Custom and Daily are excluded by ProgressSaveManager). We surface both views.
+        public int StandardTotal, StandardWins, StandardDeaths, StandardAbandoned;
+        public int CustomTotal, CustomWins, CustomDeaths, CustomAbandoned; // Custom + Daily (non-Standard)
         public float MaxRunTime;
         public double SumRunTime;
         public float FastestWin = -1f;
@@ -72,6 +76,22 @@ namespace CharacterManager.Analytics
                     if (h.Win) a.Wins++;
                     else if (h.WasAbandoned) a.Abandoned++;
                     else a.Deaths++;
+
+                    // Per-mode tallies (Standard = official; everything else = Custom/Daily).
+                    if (h.GameMode == GameMode.Standard)
+                    {
+                        a.StandardTotal++;
+                        if (h.Win) a.StandardWins++;
+                        else if (h.WasAbandoned) a.StandardAbandoned++;
+                        else a.StandardDeaths++;
+                    }
+                    else
+                    {
+                        a.CustomTotal++;
+                        if (h.Win) a.CustomWins++;
+                        else if (h.WasAbandoned) a.CustomAbandoned++;
+                        else a.CustomDeaths++;
+                    }
 
                     a.SumRunTime += h.RunTime;
                     if (h.RunTime > a.MaxRunTime) a.MaxRunTime = h.RunTime;
