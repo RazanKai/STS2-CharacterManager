@@ -1,0 +1,60 @@
+name: Upload to Nexus Mods
+
+# Uploads a release zip as a new file version on the existing Nexus Mods page.
+#
+# Setup (one time): add a repository secret named NEXUS_API_KEY
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#   Value = your personal Nexus Mods API key (https://www.nexusmods.com/users/myaccount?tab=api)
+#
+# The key is read only from the secret at run time and is never exposed in logs.
+#
+# Run it: Actions tab -> "Upload to Nexus Mods" -> Run workflow (pick the tag),
+# or it fires automatically whenever a GitHub release is published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload (e.g. v0.3.1)"
+        required: true
+        default: v0.3.1
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag, version, filename
+        id: vars
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ "$EVENT" = "release" ]; then TAG="$RELEASE_TAG"; else TAG="$DISPATCH_TAG"; fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"               >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
+          echo "filename=charactermanager-$TAG.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Download release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "${{ steps.vars.outputs.tag }}" -R "${{ github.repository }}" -p '*.zip' --dir .
+
+      - name: Upload to Nexus Mods
+        uses: Nexus-Mods/upload-action@v1.0.0-beta.8
+        with:
+          api_key: ${{ secrets.NEXUS_API_KEY }}
+          # File ID from the mod's Files tab -> "API Info" (the per-file ID used by the upload API).
+          file_id: '7549724'
+          filename: ${{ steps.vars.outputs.filename }}
+          version: ${{ steps.vars.outputs.version }}
+          display_name: "v${{ steps.vars.outputs.version }}"
+          description: "Compatibility update for Slay the Spire 2 v0.107.1."
+          category: main
+          archive_existing_version: 'true'

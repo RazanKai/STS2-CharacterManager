@@ -10,3 +10,6 @@ obj/
 CLAUDE.md
 ROADMAP.md
 *.zip
+
+# Steam Workshop uploader + workspace (local tooling)
+workshop-upload/
