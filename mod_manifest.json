@@ -2,11 +2,11 @@
   "id": "charactermanager",
   "name": "Character Manager",
   "author": "RazanKai",
-  "description": "Roster management for all characters: visibility, ordering, enable/disable in character select, per-character info cards, run-history filtering by character, and per-character analytics.",
-  "version": "0.4.0",
+  "description": "Roster management for all characters: visibility, ordering, enable/disable in character select, per-character info cards, run-history filtering by character, per-character analytics, and a configurable random-character pool.",
+  "version": "0.5.0",
   "has_pck": false,
   "has_dll": true,
-  "affects_gameplay": false,
+  "affects_gameplay": true,
   "min_game_version": "0.107.1",
   "dependencies": [
     { "id": "BaseLib" }
