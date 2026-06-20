@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using CharacterManager;
 using CharacterManager.Config;
 using Godot;
@@ -114,13 +113,11 @@ namespace CharacterManager.UI
         {
             try
             {
-                var all = CharacterHelper.GetAllCharacters();
-                Log.Info($"[CharacterManager] random pool panel: CharacterHelper.GetAllCharacters() returned {all.Count} characters: {string.Join(", ", all.Select(c => c.Id.Entry))}");
-                return all;
+                return CharacterHelper.GetAllCharacters();
             }
             catch (Exception e)
             {
-                Log.Error("[CharacterManager] random pool panel: failed to read characters: " + e);
+                Log.Error("[CharacterManager] random pool panel: failed to read characters: " + e.Message);
                 return new List<CharacterModel>();
             }
         }

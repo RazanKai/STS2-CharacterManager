@@ -39,62 +39,63 @@ namespace CharacterManager.Patches
                     return list;
                 }
 
-                // Debug: log ALL instructions around call sites
-                for (int i = 0; i < list.Count; i++)
+                // The collection NextItem draws from is whatever the parameter expects
+                // (IEnumerable<CharacterModel>). We require the producing call to return a type
+                // assignable to it so our GetPool() swap is type- and stack-compatible.
+                var collectionType = nextItemMethod.GetParameters().FirstOrDefault()?.ParameterType;
+                if (collectionType == null)
                 {
-                    var ci = list[i];
-                    if (ci.opcode == OpCodes.Call || ci.opcode == OpCodes.Callvirt || ci.opcode == OpCodes.Newobj || ci.opcode == OpCodes.Newarr)
-                    {
-                        Log.Info($"[CharacterManager] random pool: IL[{i}] = {ci.opcode} {ci.operand}");
-                    }
+                    Log.Warn("[CharacterManager] random pool: NextItem has no collection parameter; leaving vanilla draw.");
+                    return list;
                 }
 
-                // Find the call to Rng.NextItem(IEnumerable<CharacterModel>)
+                // Find the single Rng.NextItem<CharacterModel> call. More than one is an ambiguous
+                // future layout we won't guess at; zero means the draw moved — bail either way.
                 int nextItemIndex = -1;
+                int nextItemCount = 0;
                 for (int i = 0; i < list.Count; i++)
                 {
                     if (list[i].Calls(nextItemMethod))
                     {
-                        nextItemIndex = i;
-                        Log.Info($"[CharacterManager] random pool: found NextItem at IL[{i}]");
-                        break;
+                        nextItemCount++;
+                        if (nextItemIndex == -1) nextItemIndex = i;
                     }
                 }
 
-                if (nextItemIndex == -1)
+                if (nextItemCount != 1)
                 {
-                    Log.Warn("[CharacterManager] random pool: could not find Rng.NextItem call in BeginRunLocally; leaving vanilla draw.");
+                    Log.Warn($"[CharacterManager] random pool: expected exactly 1 Rng.NextItem<CharacterModel> call in BeginRunLocally, found {nextItemCount}; leaving vanilla draw (re-verify after game update).");
                     return list;
                 }
 
-                // The argument to NextItem is loaded by the instruction immediately before it.
-                // In the running game, this is a call to GetRandomEligibleCharacters() instead of ModelDb.AllCharacters.
-                // We don't care WHAT loads the collection - we just replace whatever instruction loads it
-                // with our own GetPool() call.
+                // The collection is produced by the instruction immediately before NextItem. We only
+                // rewrite it when it is a static, parameterless Call whose return type the NextItem
+                // parameter accepts. That matches the vanilla producer (ModelDb.AllCharacters getter
+                // in the decompiled source / GetRandomEligibleCharacters() in the live build) and
+                // guarantees a stack-neutral swap with our static, parameterless GetPool(): both
+                // consume nothing and push one IEnumerable<CharacterModel>. Anything else (an
+                // instance call, a newobj/newarr, an intervening arg) fails closed to vanilla.
                 int targetIndex = nextItemIndex - 1;
                 if (targetIndex < 0)
                 {
-                    Log.Warn("[CharacterManager] random pool: NextItem is at index 0, no argument to replace; leaving vanilla draw.");
+                    Log.Warn("[CharacterManager] random pool: NextItem is at index 0, no producer to replace; leaving vanilla draw.");
                     return list;
                 }
 
-                // Verify the target instruction loads a collection (call, callvirt, newobj, newarr)
                 var targetCi = list[targetIndex];
-                bool loadsCollection = targetCi.opcode == OpCodes.Call 
-                    || targetCi.opcode == OpCodes.Callvirt 
-                    || targetCi.opcode == OpCodes.Newobj 
-                    || targetCi.opcode == OpCodes.Newarr;
-                
-                if (!loadsCollection)
+                if (targetCi.opcode != OpCodes.Call
+                    || targetCi.operand is not MethodInfo producer
+                    || !producer.IsStatic
+                    || producer.GetParameters().Length != 0
+                    || !collectionType.IsAssignableFrom(producer.ReturnType))
                 {
-                    Log.Warn($"[CharacterManager] random pool: instruction at IL[{targetIndex}] ({targetCi.opcode}) doesn't appear to load a collection; leaving vanilla draw.");
+                    Log.Warn($"[CharacterManager] random pool: producer before NextItem (IL[{targetIndex}] {targetCi.opcode} {targetCi.operand}) is not a static parameterless call returning {collectionType.Name}; leaving vanilla draw (re-verify after game update).");
                     return list;
                 }
 
-                // Replace the instruction that loads the collection with our GetPool call
-                targetCi.opcode = OpCodes.Call;
+                // Swap the producer for GetPool(). Stays a static call; rng sequencing is untouched.
                 targetCi.operand = replacement;
-                Log.Info($"[CharacterManager] random pool: patched BeginRunLocally at IL index {targetIndex} (was {list[targetIndex].opcode}) to draw from the configured pool.");
+                Log.Info($"[CharacterManager] random pool: patched BeginRunLocally (replaced {producer.Name} at IL[{targetIndex}]) to draw from the configured pool.");
                 return list;
             }
             catch (Exception e)
