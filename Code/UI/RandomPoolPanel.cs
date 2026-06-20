@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CharacterManager;
 using CharacterManager.Config;
 using Godot;
 using MegaCrit.Sts2.Core.Logging;
@@ -108,16 +109,18 @@ namespace CharacterManager.UI
                 rows.AddChild(MakeRow(c));
         }
 
-        /// <summary>The drawable roster, in <c>ModelDb.AllCharacters</c> order (same set the draw uses).</summary>
+        /// <summary>The drawable roster, in <see cref="CharacterHelper.GetAllCharacters"/> order. Shows all characters so they can be toggled In/Out.</summary>
         private static List<CharacterModel> GetDrawableCharacters()
         {
             try
             {
-                return ModelDb.AllCharacters?.Where(c => c != null).ToList() ?? new List<CharacterModel>();
+                var all = CharacterHelper.GetAllCharacters();
+                Log.Info($"[CharacterManager] random pool panel: CharacterHelper.GetAllCharacters() returned {all.Count} characters: {string.Join(", ", all.Select(c => c.Id.Entry))}");
+                return all;
             }
             catch (Exception e)
             {
-                Log.Warn("[CharacterManager] random pool panel: failed to read AllCharacters: " + e.Message);
+                Log.Error("[CharacterManager] random pool panel: failed to read characters: " + e);
                 return new List<CharacterModel>();
             }
         }

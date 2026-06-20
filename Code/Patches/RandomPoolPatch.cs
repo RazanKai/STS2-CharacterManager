@@ -8,35 +8,10 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+using MegaCrit.Sts2.Core.Random;
 
 namespace CharacterManager.Patches
 {
-    /// <summary>
-    /// Restricts the <b>Random</b> character draw to the player's chosen pool (see
-    /// <see cref="RandomPoolStore"/>).
-    ///
-    /// <para><b>Where the game draws.</b>
-    /// <c>StartRunLobby.BeginRunLocally(string, List&lt;ModifierModel&gt;)</c> resolves any
-    /// RandomCharacter lobby slot with a single line:
-    /// <code>CharacterModel character = rng.NextItem(ModelDb.AllCharacters);</code>
-    /// This is the only reference to <c>ModelDb.AllCharacters</c> in that method.</para>
-    ///
-    /// <para><b>Why a transpiler.</b> A postfix is too late (the character is already chosen); a
-    /// prefix would have to re-derive the seeded <c>rng</c> after <c>ActModel.GetRandomList</c>
-    /// has already advanced it earlier in the same method — fragile and determinism-breaking. The
-    /// clean seam is to swap the operand of the single <c>call get_AllCharacters</c> instruction
-    /// for a call to <see cref="RandomPoolStore.GetPool"/>. Both are static, parameterless, and
-    /// return <c>IEnumerable&lt;CharacterModel&gt;</c>, so the surrounding IL (the
-    /// <c>rng.NextItem</c> call that consumes it) is untouched and rng sequencing is identical.
-    /// When every character is in the pool, <c>GetPool</c> returns the same list in the same
-    /// order, so vanilla seeds reproduce exactly.</para>
-    ///
-    /// <para><b>Guard hard.</b> This is the mod's only gameplay-path patch and transpilers are the
-    /// most update-fragile patch type. If the expected single <c>get_AllCharacters</c> call isn't
-    /// found (zero, or more than one — an ambiguous future layout), we log and emit the original IL
-    /// unchanged, leaving vanilla behavior intact rather than risking a wrong rewrite. Re-verify
-    /// this site on every game update.</para>
-    /// </summary>
     [HarmonyPatch]
     public static class RandomPoolPatch
     {
@@ -54,31 +29,72 @@ namespace CharacterManager.Patches
             var list = instructions.ToList();
             try
             {
-                var getter = AccessTools.PropertyGetter(typeof(ModelDb), nameof(ModelDb.AllCharacters));
                 var replacement = AccessTools.Method(typeof(RandomPoolStore), nameof(RandomPoolStore.GetPool));
-                if (getter == null || replacement == null)
+                var nextItemGeneric = AccessTools.Method(typeof(Rng), nameof(Rng.NextItem));
+                var nextItemMethod = nextItemGeneric?.MakeGenericMethod(typeof(CharacterModel));
+
+                if (replacement == null || nextItemMethod == null)
                 {
-                    Log.Warn("[CharacterManager] random pool: could not resolve get_AllCharacters or GetPool; leaving vanilla draw.");
+                    Log.Warn("[CharacterManager] random pool: could not resolve GetPool or NextItem; leaving vanilla draw.");
                     return list;
                 }
 
-                int matches = list.Count(ci => ci.Calls(getter));
-                if (matches != 1)
+                // Debug: log ALL instructions around call sites
+                for (int i = 0; i < list.Count; i++)
                 {
-                    Log.Warn($"[CharacterManager] random pool: expected exactly 1 ModelDb.AllCharacters call in BeginRunLocally, found {matches}; leaving vanilla draw (re-verify after game update).");
-                    return list;
-                }
-
-                foreach (var ci in list)
-                {
-                    if (ci.Calls(getter))
+                    var ci = list[i];
+                    if (ci.opcode == OpCodes.Call || ci.opcode == OpCodes.Callvirt || ci.opcode == OpCodes.Newobj || ci.opcode == OpCodes.Newarr)
                     {
-                        ci.opcode = OpCodes.Call;   // GetPool is static
-                        ci.operand = replacement;
-                        Log.Info("[CharacterManager] random pool: patched BeginRunLocally to draw from the configured pool.");
+                        Log.Info($"[CharacterManager] random pool: IL[{i}] = {ci.opcode} {ci.operand}");
+                    }
+                }
+
+                // Find the call to Rng.NextItem(IEnumerable<CharacterModel>)
+                int nextItemIndex = -1;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i].Calls(nextItemMethod))
+                    {
+                        nextItemIndex = i;
+                        Log.Info($"[CharacterManager] random pool: found NextItem at IL[{i}]");
                         break;
                     }
                 }
+
+                if (nextItemIndex == -1)
+                {
+                    Log.Warn("[CharacterManager] random pool: could not find Rng.NextItem call in BeginRunLocally; leaving vanilla draw.");
+                    return list;
+                }
+
+                // The argument to NextItem is loaded by the instruction immediately before it.
+                // In the running game, this is a call to GetRandomEligibleCharacters() instead of ModelDb.AllCharacters.
+                // We don't care WHAT loads the collection - we just replace whatever instruction loads it
+                // with our own GetPool() call.
+                int targetIndex = nextItemIndex - 1;
+                if (targetIndex < 0)
+                {
+                    Log.Warn("[CharacterManager] random pool: NextItem is at index 0, no argument to replace; leaving vanilla draw.");
+                    return list;
+                }
+
+                // Verify the target instruction loads a collection (call, callvirt, newobj, newarr)
+                var targetCi = list[targetIndex];
+                bool loadsCollection = targetCi.opcode == OpCodes.Call 
+                    || targetCi.opcode == OpCodes.Callvirt 
+                    || targetCi.opcode == OpCodes.Newobj 
+                    || targetCi.opcode == OpCodes.Newarr;
+                
+                if (!loadsCollection)
+                {
+                    Log.Warn($"[CharacterManager] random pool: instruction at IL[{targetIndex}] ({targetCi.opcode}) doesn't appear to load a collection; leaving vanilla draw.");
+                    return list;
+                }
+
+                // Replace the instruction that loads the collection with our GetPool call
+                targetCi.opcode = OpCodes.Call;
+                targetCi.operand = replacement;
+                Log.Info($"[CharacterManager] random pool: patched BeginRunLocally at IL index {targetIndex} (was {list[targetIndex].opcode}) to draw from the configured pool.");
                 return list;
             }
             catch (Exception e)
