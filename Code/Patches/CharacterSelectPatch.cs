@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 
 namespace CharacterManager.Patches
@@ -106,57 +107,72 @@ namespace CharacterManager.Patches
                 && !EnabledStore.IsEnabled(c.Id);
         }
 
-        // ─── Live select-screen rebuild ─────────────────────────────────────
-        // When the player toggles a character in the manager, we update the
-        // character-select screen immediately without requiring a restart.
+        // ─── Live select-screen rebuild (no restart) ────────────────────────
+        //
+        // The roster is filtered correctly only while the screen's buttons are BUILT (see the
+        // AllCharacters getter postfix above). The select screen is built once — eagerly, in
+        // NMainMenuSubmenuStack._Ready — then cached in the stack's private _characterSelectSubmenu
+        // field and reused for every open. That cache is exactly why toggling a character used to
+        // require a game restart.
+        //
+        // An earlier attempt tried to mutate the live button strip (flipping each button's Visible)
+        // on toggle. That can't work: the filter means a disabled character never gets a button to
+        // flip, and library reshapers (RitsuLib's NCharacterButtonStripScroller) re-measure from the
+        // roster and ignore per-button Visible. So instead we DISCARD the cached screen when the
+        // roster changes. The next open makes the stack rebuild it from scratch — re-running
+        // InitCharacterButtons (and any reshaping) under the filter above. A fresh build is the same
+        // path as launching the game, which is known to honor the toggle. Same for the custom-run
+        // screen, which also lists the roster.
 
-        private static NCharacterSelectScreen? _liveInstance;
-        private static readonly FieldInfo CharButtonField =
-            AccessTools.Field(typeof(NCharacterSelectScreen), "_charButtonContainer");
+        private static NMainMenuSubmenuStack? _menuStack;
+        private static bool _subscribed;
 
+        private static readonly FieldInfo? CharSelectField =
+            AccessTools.Field(typeof(NMainMenuSubmenuStack), "_characterSelectSubmenu");
+        private static readonly FieldInfo? CustomRunField =
+            AccessTools.Field(typeof(NMainMenuSubmenuStack), "_customRunScreen");
+
+        // Capture the live main-menu stack and wire the toggle handler when the stack is ready.
+        // Doing it here (rather than in a static constructor) guarantees the subscription is active
+        // without depending on when the CLR first touches this type.
         [HarmonyPostfix]
-        [HarmonyPatch(typeof(NCharacterSelectScreen), "_Ready")]
-        public static void CaptureInstance(NCharacterSelectScreen __instance)
+        [HarmonyPatch(typeof(NMainMenuSubmenuStack), "_Ready")]
+        public static void CaptureStack(NMainMenuSubmenuStack __instance)
         {
-            _liveInstance = __instance;
-        }
-
-        [HarmonyPostfix]
-        [HarmonyPatch(typeof(NCharacterSelectScreen), "OnSubmenuClosed")]
-        public static void ReleaseInstance()
-        {
-            _liveInstance = null;
-        }
-
-        static CharacterSelectPatch()
-        {
-            EnabledStore.OnToggle += OnEnabledToggle;
-        }
-
-        private static void OnEnabledToggle(ModelId characterId)
-        {
-            var screen = _liveInstance;
-            if (screen == null || !GodotObject.IsInstanceValid(screen)) return;
-
-            var container = CharButtonField?.GetValue(screen) as Control;
-            if (container == null) return;
-
-            bool enabled = EnabledStore.IsEnabled(characterId);
-
-            foreach (Node child in container.GetChildren())
+            _menuStack = __instance;
+            if (!_subscribed)
             {
-                if (child.Name == characterId.Entry + "_button" && child is NCharacterSelectButton btn)
-                {
-                    btn.Visible = enabled;
-                    Log.Info($"[CharacterManager] live toggled '{characterId.Entry}' {(enabled ? "shown" : "hidden")} in character select.");
-                    return;
-                }
+                EnabledStore.OnToggle += OnRosterToggled;
+                _subscribed = true;
             }
+        }
 
-            // RitsuLib may have reparented — try a full traversal.
-            var found = screen.FindChild(characterId.Entry + "_button", recursive: true, owned: false);
-            if (found is NCharacterSelectButton btn2)
-                btn2.Visible = enabled;
+        private static void OnRosterToggled(ModelId _)
+        {
+            var stack = _menuStack;
+            if (stack == null || !GodotObject.IsInstanceValid(stack)) return;
+
+            DiscardCachedScreen(stack, CharSelectField);
+            DiscardCachedScreen(stack, CustomRunField);
+        }
+
+        /// <summary>
+        /// Frees the cached submenu held in <paramref name="field"/> on the stack and nulls the field
+        /// so the stack rebuilds it on next request. No-ops if the field is empty/invalid, or if the
+        /// screen is currently displayed (it can't be while the manager is open, but we guard anyway
+        /// so a visible screen is never freed out from under the player).
+        /// </summary>
+        private static void DiscardCachedScreen(NMainMenuSubmenuStack stack, FieldInfo? field)
+        {
+            if (field == null) return;
+            if (field.GetValue(stack) is not Node screen) return;
+            if (!GodotObject.IsInstanceValid(screen)) { field.SetValue(stack, null); return; }
+            if (screen is Control c && c.Visible) return; // currently on-screen — leave it
+
+            field.SetValue(stack, null);
+            screen.GetParent()?.RemoveChild(screen);
+            screen.QueueFree();
+            Log.Info("[CharacterManager] discarded cached " + screen.GetType().Name + "; will rebuild on next open.");
         }
     }
 }

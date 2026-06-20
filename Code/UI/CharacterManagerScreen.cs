@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using CharacterManager.Config;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.RunHistoryScreen;
 using MegaCrit.Sts2.Core.Saves;
@@ -319,34 +322,120 @@ namespace CharacterManager.UI
             return frame;
         }
 
+        // Internal pixel size of the off-screen viewport the creature renders into. The TextureRect
+        // displays this with KeepAspectCentered, so the exact numbers only set the render resolution
+        // and the working coordinate space for placement — not the on-screen size.
+        private const int VisualsViewportW = 340;
+        private const int VisualsViewportH = 360;
+
+        // CharacterModel.VisualsPath is private; cache its getter so we can resolve the scene path
+        // (correct for base AND modded characters) without going through CreateVisuals().
+        private static readonly MethodInfo? VisualsPathGetter =
+            AccessTools.PropertyGetter(typeof(CharacterModel), "VisualsPath");
+
         /// <summary>
-        /// Attempts to instantiate the character's live combat visuals (<see cref="CharacterModel.CreateVisuals"/>)
-        /// and add them to the frame, scaled to fit. Returns true on success.
+        /// Attempts to render the character's live combat visuals into the frame. Returns true only
+        /// when a creature node was actually loaded and attached; on any failure returns false so the
+        /// caller falls back to the static portrait.
+        ///
+        /// <para>Two problems from the first attempt are addressed here:</para>
+        /// <list type="bullet">
+        /// <item>Crash: <see cref="CharacterModel.CreateVisuals"/> routes through the game's
+        /// <c>AssetCache.LoadAsset</c>. On a menu the creature scene isn't preloaded, so that is a
+        /// cold load — which other mods (e.g. Ryoshu) patch and fatally crash on. We load the scene
+        /// directly via <see cref="ResourceLoader"/> instead, bypassing that patched path.</item>
+        /// <item>Black frame: <see cref="NCreatureVisuals"/> is a <c>Node2D</c>; parenting it into a
+        /// Control renders nothing. We host it in a <see cref="SubViewport"/> and display the
+        /// viewport texture, positioning the creature with its own <c>Bounds</c> marker.</item>
+        /// </list>
         /// </summary>
         private static bool TryAttachLiveVisuals(PanelContainer frame, CharacterModel character)
         {
+            NCreatureVisuals? visuals = null;
             try
             {
-                var visuals = character.CreateVisuals();
+                if (VisualsPathGetter?.Invoke(character, null) is not string path || string.IsNullOrEmpty(path))
+                    return false;
+
+                // Bypass AssetCache (and any mod patches on it) by loading the PackedScene directly.
+                var scene = ResourceLoader.Load<PackedScene>(path, null, ResourceLoader.CacheMode.Reuse);
+                if (scene == null) return false;
+
+                visuals = scene.Instantiate<NCreatureVisuals>(PackedScene.GenEditState.Disabled);
                 if (visuals == null || !GodotObject.IsInstanceValid(visuals)) return false;
-
-                // Scale the visuals to fit within the frame height.
-                // DefaultScale is 1.0 (combat size, roughly 400px); scale to ~360px.
-                float combatHeight = 400f;
-                float scale = DetailImageHeight / combatHeight;
-                visuals.SetScaleAndHue(scale * visuals.DefaultScale, 0f);
-
-                // Offset past the border (2px) so the sprite doesn't overlap it.
-                float borderOff = 2f;
-                visuals.Position = new Vector2(borderOff, borderOff);
-                frame.AddChild(visuals);
-                return true;
             }
             catch (Exception e)
             {
-                Log.Warn("[CharacterManager] CreateVisuals failed for " + character.Id.Entry + ": " + e.Message);
+                Log.Warn("[CharacterManager] live visuals load failed for " + character.Id.Entry + ": " + e.Message);
+                visuals?.QueueFree();
                 return false;
             }
+
+            // Off-screen viewport that actually renders the Node2D.
+            var viewport = new SubViewport
+            {
+                Size = new Vector2I(VisualsViewportW, VisualsViewportH),
+                TransparentBg = true,
+                Disable3D = true,
+                RenderTargetClearMode = SubViewport.ClearMode.Always,
+                RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+            };
+            frame.AddChild(viewport);
+            viewport.AddChild(visuals); // triggers _Ready (sets up Bounds + spine body)
+
+            // Initial best-effort placement (refined once _Ready has populated Bounds).
+            float s0 = (VisualsViewportH * 0.82f) / 400f;
+            visuals.SetScaleAndHue(s0, 0f);
+            visuals.Position = new Vector2(VisualsViewportW / 2f, VisualsViewportH * 0.9f);
+
+            // Display the viewport texture in the Control tree, fit inside the frame.
+            frame.AddChild(new TextureRect
+            {
+                Texture = viewport.GetTexture(),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                SizeFlagsVertical = SizeFlags.ExpandFill,
+                MouseFilter = MouseFilterEnum.Ignore,
+            });
+
+            // After _Ready: start the idle loop and fit precisely using the creature's Bounds.
+            Callable.From(() => FitAndAnimate(viewport, visuals)).CallDeferred();
+            return true;
+        }
+
+        /// <summary>
+        /// Runs one frame after the visuals enter the tree: plays the idle animation and rescales /
+        /// repositions the creature so its <c>Bounds</c> sit centred near the bottom of the viewport.
+        /// All best-effort — guarded so a missing animation or null Bounds never throws.
+        /// </summary>
+        private static void FitAndAnimate(SubViewport viewport, NCreatureVisuals visuals)
+        {
+            if (!GodotObject.IsInstanceValid(visuals)) return;
+
+            try { visuals.SpineAnimation.SetAnimation("idle_loop", true); }
+            catch (Exception e) { Log.Warn("[CharacterManager] idle anim failed: " + e.Message); }
+
+            try
+            {
+                var bounds = visuals.Bounds;
+                if (bounds == null || bounds.Size.Y <= 1f) return;
+
+                var size = bounds.Size;                       // local (pre-scale) bounds
+                // Fit the bounds to ~70% of the viewport height. Bounds is the *body* rect; raised
+                // weapons, horns, and flames extend above it, so the remaining ~25% top margin is
+                // deliberate headroom for that overflow.
+                float s = (VisualsViewportH * 0.70f) / size.Y;
+                visuals.SetScaleAndHue(s, 0f);
+
+                // Align bounds centre-x to the viewport centre, and bounds bottom near the floor.
+                float bottom = bounds.Position.Y + size.Y;
+                float centerX = bounds.Position.X + size.X / 2f;
+                visuals.Position = new Vector2(
+                    VisualsViewportW / 2f - centerX * s,
+                    VisualsViewportH * 0.95f - bottom * s);
+            }
+            catch (Exception e) { Log.Warn("[CharacterManager] visuals fit failed: " + e.Message); }
         }
 
         /// <summary>The large character-select portrait, falling back to the small icon, then null.</summary>
