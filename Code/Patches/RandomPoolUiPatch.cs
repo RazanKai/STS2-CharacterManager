@@ -3,7 +3,6 @@ using CharacterManager.UI;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
-using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 
 namespace CharacterManager.Patches
@@ -18,9 +17,10 @@ namespace CharacterManager.Patches
     /// Random tile was picked. We postfix it to toggle the pool card. The card is parented to the
     /// screen, so it is freed automatically when the screen rebuilds (e.g. on a roster toggle).</para>
     ///
-    /// <para><b>Scope.</b> Singleplayer only for v1. The random pick is resolved by the host in
-    /// <c>BeginRunLocally</c> from the host's local pool; we don't sync the pool across peers, so we
-    /// don't surface the panel in multiplayer lobbies to avoid implying it affects other players.</para>
+    /// <para><b>Scope.</b> Shown for the local player's own Random pick in both singleplayer and
+    /// multiplayer — it edits the local player's pool, which governs that player's own draw on every
+    /// peer (the pool is synced via <see cref="RandomPoolNet"/>). It is inherently local: this hook is
+    /// the local selection callback, so it never surfaces for remote players' choices.</para>
     /// </summary>
     [HarmonyPatch(typeof(NCharacterSelectScreen), "SelectCharacter")]
     public static class RandomPoolUiPatch
@@ -32,9 +32,7 @@ namespace CharacterManager.Patches
             {
                 if (__instance == null || !GodotObject.IsInstanceValid(__instance)) return;
 
-                bool wantPanel = charSelectButton != null
-                                 && charSelectButton.IsRandom
-                                 && IsSingleplayer(__instance);
+                bool wantPanel = charSelectButton != null && charSelectButton.IsRandom;
 
                 var existing = __instance.GetNodeOrNull(RandomPoolPanel.NodeName) as RandomPoolPanel;
 
@@ -51,6 +49,9 @@ namespace CharacterManager.Patches
                     {
                         existing.Visible = true;
                     }
+
+                    // Advertise our current pool to peers the moment we pick Random (no-op in SP).
+                    RandomPoolNet.BroadcastLocalPool();
                 }
                 else if (existing != null && GodotObject.IsInstanceValid(existing))
                 {
@@ -60,21 +61,6 @@ namespace CharacterManager.Patches
             catch (Exception e)
             {
                 Log.Warn("[CharacterManager] random pool panel toggle failed: " + e.Message);
-            }
-        }
-
-        private static bool IsSingleplayer(NCharacterSelectScreen screen)
-        {
-            try
-            {
-                var lobby = screen.Lobby;
-                return lobby != null && lobby.NetService != null
-                    && lobby.NetService.Type == NetGameType.Singleplayer;
-            }
-            catch
-            {
-                // If we can't tell, default to showing it (the common case is singleplayer).
-                return true;
             }
         }
     }

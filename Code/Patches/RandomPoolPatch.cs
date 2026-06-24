@@ -5,8 +5,10 @@ using System.Reflection;
 using System.Reflection.Emit;
 using CharacterManager.Config;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Random;
 
@@ -22,6 +24,47 @@ namespace CharacterManager.Patches
             if (m == null)
                 Log.Warn("[CharacterManager] random pool: StartRunLobby.BeginRunLocally not found; transpiler will not arm.");
             return m;
+        }
+
+        /// <summary>
+        /// Arms the per-player resolution context before the draw loop runs. The loop resolves every
+        /// player whose character is Random, in <c>Players</c> order, with one <c>rng.NextItem</c> call
+        /// each — and our transpiler points each of those at the parameterless
+        /// <see cref="RandomPoolStore.GetPool"/>. By queuing the random-pickers' net ids here (same
+        /// order), <c>GetPool</c> can return the correct player's pool per call without threading the
+        /// loop variable through IL. Runs identically on host and every client (the client sets
+        /// <c>Players</c> from the host's begin message before this method runs), so all peers resolve
+        /// each player's slot from that player's synced pool. Guarded: any failure disarms the context,
+        /// so <c>GetPool</c> falls back to the local pool (singleplayer-safe).
+        /// </summary>
+        private static void Prefix(StartRunLobby __instance)
+        {
+            try
+            {
+                if (__instance?.Players == null || __instance.NetService == null)
+                {
+                    RandomPoolStore.EndResolution();
+                    return;
+                }
+
+                ulong localNetId = __instance.NetService.NetId;
+                var pickers = __instance.Players
+                    .Where(p => p.character is RandomCharacter)
+                    .Select(p => p.id);
+                RandomPoolStore.BeginResolution(pickers, localNetId);
+            }
+            catch (Exception e)
+            {
+                Log.Warn("[CharacterManager] random pool: failed to arm resolution context (" + e.Message + "); using local pool.");
+                RandomPoolStore.EndResolution();
+            }
+        }
+
+        /// <summary>Disarm the resolution context once the draw loop has run.</summary>
+        private static void Postfix()
+        {
+            try { RandomPoolStore.EndResolution(); }
+            catch { /* never let teardown throw */ }
         }
 
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)

@@ -172,6 +172,8 @@ namespace CharacterManager.UI
             foreach (var c in GetDrawableCharacters())
                 RandomPoolStore.Set(c.Id, inPool);
             foreach (var refresh in _rowRefreshers) refresh();
+            // One notification for the whole bulk edit (re-broadcasts the pool in MP once).
+            RandomPoolStore.RaisePoolChanged();
         }
 
         private static string SafeTitle(CharacterModel c)

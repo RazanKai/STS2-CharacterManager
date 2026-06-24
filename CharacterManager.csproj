@@ -4,7 +4,11 @@
     <RootNamespace>CharacterManager</RootNamespace>
     <!-- Assembly name must match manifest id (case-sensitive on Linux). -->
     <AssemblyName>charactermanager</AssemblyName>
-    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- The game hosts mods in its own .NET runtime and resolves their references, so we don't
+         need EnableDynamicLoading's plugin metadata. Leaving it on emits charactermanager.deps.json
+         + charactermanager.runtimeconfig.json into the output, which the loader scans and logs
+         "missing 'id' field" errors over. Other mods ship just the .dll + manifest; we match that. -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputPath>bin\$(Configuration)\</OutputPath>
