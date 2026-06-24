@@ -81,12 +81,26 @@ namespace CharacterManager.Patches
         public static void Disarm_CustomRun() => _filterDepth--;
 
         // ─── Remove disabled customs from the roster during construction ──────
-        // Runs LAST so modded characters added by other getter postfixes are present in __result
-        // before we filter. Mirrors RitsuLib's CharacterVanillaSelectionPolicyAllCharactersPatch.
+        // This handles characters that reach the select screen through the VANILLA path — i.e.
+        // those present in <c>ModelDb.AllCharacters</c> at button-build time (e.g. Ryoshu, which
+        // patches the getter to add itself). Removing them here means no button is ever built.
+        //
+        // <para>It does NOT cover characters injected by character libraries. Those register into
+        // their own catalogs and add the select buttons directly, never passing through
+        // <c>ModelDb.AllCharacters</c> at build time (verified at runtime: this postfix — even at
+        // <c>int.MinValue</c>, i.e. after every other getter postfix — only ever saw Ryoshu, while
+        // The Cursed / LittleWizard appeared in the strip as ordinary buttons). Those are removed
+        // by <see cref="RemoveDisabledButtons_Select"/> / <see cref="RemoveDisabledButtons_CustomRun"/>
+        // below, which operate on the built strip.</para>
+        //
+        // <para><b>Priority.</b> <c>int.MinValue</c> guarantees we run after every other
+        // get_AllCharacters postfix (library appenders, Ryoshu's own adder, etc.) regardless of
+        // owner-string matching, so the roster is fully assembled before we filter. [HarmonyAfter]
+        // is kept as a hint for the named owners.</para>
 
         [HarmonyPostfix]
-        [HarmonyPriority(Priority.Last)]
-        [HarmonyAfter("BaseLib", "KitLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry", "Ryoshu", "TheCursedMod")]
+        [HarmonyPriority(int.MinValue)]
+        [HarmonyAfter("BaseLib", "KitLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry", "com.ritsukage.sts2-RitsuLib.framework-character-assets", "Ryoshu", "TheCursedMod")]
         [HarmonyPatch(typeof(ModelDb), nameof(ModelDb.AllCharacters), MethodType.Getter)]
         public static void AllCharacters_Getter_Postfix(ref IEnumerable<CharacterModel> __result)
         {
@@ -105,6 +119,79 @@ namespace CharacterManager.Patches
             return c != null
                 && !CharacterHelper.IsBaseCharacter(c.Id)
                 && !EnabledStore.IsEnabled(c.Id);
+        }
+
+        // ─── Remove disabled-custom buttons that bypass the AllCharacters roster ───
+        //
+        // <para><b>Why a second mechanism is needed.</b> The getter filter above only
+        // affects characters that the select screen builds by iterating
+        // <c>ModelDb.AllCharacters</c> (e.g. Ryoshu, which patches the getter directly).
+        // Character LIBRARIES register their characters into their OWN catalogs and inject
+        // the select buttons straight into the button strip — these characters are NEVER in
+        // <c>ModelDb.AllCharacters</c> at build time (verified at runtime: the getter only
+        // ever saw <c>CHARACTER.RYOSHU</c>, while The Cursed / LittleWizard appeared in the
+        // strip as ordinary <see cref="NCharacterSelectButton"/>s whose <c>Character</c> is
+        // the mod-prefixed model, e.g. <c>CHARACTER.LITTLEWIZARD-LITTLE_WIZARD</c>). No getter
+        // postfix — at any priority — can reach those.</para>
+        //
+        // <para><b>Approach.</b> Run LAST on <c>InitCharacterButtons</c> (after the library has
+        // injected its buttons), walk the freshly built strip, and free every
+        // <see cref="NCharacterSelectButton"/> whose character is a disabled custom. Freeing the
+        // node (not flipping <c>Visible</c>) is what sticks: library scrollers re-measure from
+        // the strip's real children, so a removed child shrinks the strip correctly. Works for
+        // both the character-select and custom-run screens.</para>
+
+        [HarmonyPostfix]
+        [HarmonyPriority(int.MinValue)]
+        [HarmonyAfter("BaseLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry", "com.ritsukage.sts2-RitsuLib.framework-character-assets")]
+        [HarmonyPatch(typeof(NCharacterSelectScreen), "InitCharacterButtons")]
+        public static void RemoveDisabledButtons_Select(NCharacterSelectScreen __instance)
+            => RemoveDisabledButtons((Node)__instance);
+
+        [HarmonyPostfix]
+        [HarmonyPriority(int.MinValue)]
+        [HarmonyAfter("BaseLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry", "com.ritsukage.sts2-RitsuLib.framework-character-assets")]
+        [HarmonyPatch(typeof(NCustomRunScreen), "InitCharacterButtons")]
+        public static void RemoveDisabledButtons_CustomRun(NCustomRunScreen __instance)
+            => RemoveDisabledButtons((Node)__instance);
+
+        // Cached accessor for NCharacterSelectButton.Character (public getter; cached to avoid
+        // per-button reflection cost on every screen build).
+        private static readonly PropertyInfo? ButtonCharacterProp =
+            AccessTools.Property(typeof(NCharacterSelectButton), nameof(NCharacterSelectButton.Character));
+
+        private static void RemoveDisabledButtons(Node screenRoot)
+        {
+            if (screenRoot == null) return;
+            try
+            {
+                var toRemove = new List<Node>();
+                CollectDisabledButtons(screenRoot, toRemove, 0);
+                foreach (var btn in toRemove)
+                {
+                    btn.GetParent()?.RemoveChild(btn);
+                    btn.QueueFree();
+                }
+                if (toRemove.Count > 0)
+                    Log.Info($"[CharacterManager] character-select: removed {toRemove.Count} disabled custom button(s) from the strip.");
+            }
+            catch (System.Exception e)
+            {
+                Log.Warn("[CharacterManager] RemoveDisabledButtons failed: " + e.Message);
+            }
+        }
+
+        private static void CollectDisabledButtons(Node node, List<Node> sink, int depth)
+        {
+            if (node == null || depth > 8) return;
+            if (node is NCharacterSelectButton btn)
+            {
+                if (ButtonCharacterProp?.GetValue(btn) is CharacterModel cm && IsDisabledCustom(cm))
+                    sink.Add(btn);
+                return; // buttons don't nest characters; no need to recurse into one
+            }
+            foreach (var child in node.GetChildren())
+                if (child is Node cn) CollectDisabledButtons(cn, sink, depth + 1);
         }
 
         // ─── Live select-screen rebuild (no restart) ────────────────────────

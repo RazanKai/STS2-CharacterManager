@@ -196,10 +196,17 @@ namespace CharacterManager.Config
         }
 
         /// <summary>
-        /// The local player's pool: <c>ModelDb.AllCharacters</c> (runtime order preserved) minus
-        /// unchecked ids. Falls back to the full roster if the filter empties it or anything throws,
-        /// so <c>NextItem</c> is never handed an empty set. This is both what we draw our own slot
-        /// from and exactly what we broadcast to peers, so the two always agree.
+        /// The local player's pool: <c>ModelDb.AllCharacters</c> (runtime order preserved), minus
+        /// characters hidden from the in-select grid (a hard override — never drawable), minus
+        /// characters unchecked in the random pool. Never returns an empty set, so <c>NextItem</c> is
+        /// always safe. This is both what we draw our own slot from and exactly what we broadcast to
+        /// peers, so the two always agree.
+        ///
+        /// <para><b>Fallback never re-introduces a hidden character.</b> If the player has unchecked
+        /// every character they can see, the pool is empty — but we must still hand back a non-empty
+        /// set. The fallback is the in-select-<i>visible</i> roster (enabled characters), NOT the full
+        /// roster, so a character hidden in select can never be drawn even in this degenerate case
+        /// (it previously could: the old "fall back to full roster" path leaked hidden customs).</para>
         /// </summary>
         public static List<CharacterModel> BuildLocalPool()
         {
@@ -217,21 +224,42 @@ namespace CharacterManager.Config
 
             if (all.Count == 0) return all;
 
+            // The in-select-visible roster: characters NOT hidden from the manual select grid. This is
+            // the hard ceiling on what Random may ever draw — base characters are always enabled, so
+            // only disabled customs are removed here.
+            List<CharacterModel> enabled;
             try
             {
                 EnsureLoaded();
-                var filtered = all.Where(c => IsInPool(c.Id)).ToList();
-                if (filtered.Count == 0)
-                {
-                    Log.Warn("[CharacterManager] random pool empty after filter; falling back to the full roster.");
-                    return all;
-                }
-                return filtered;
+                enabled = all.Where(c => EnabledStore.IsEnabled(c.Id)).ToList();
             }
             catch (Exception e)
             {
-                Log.Warn("[CharacterManager] random pool: filter failed (" + e.Message + "); using full roster.");
+                Log.Warn("[CharacterManager] random pool: in-select filter failed (" + e.Message + "); using full roster.");
                 return all;
+            }
+            // Degenerate: nothing visible at all. Base characters are always enabled, so this should
+            // never happen; fall back to the full roster only to keep the draw non-empty.
+            if (enabled.Count == 0)
+            {
+                Log.Warn("[CharacterManager] random pool: no in-select-visible characters; using full roster.");
+                return all;
+            }
+
+            try
+            {
+                var filtered = enabled.Where(c => IsInPool(c.Id)).ToList();
+                if (filtered.Count > 0) return filtered;
+
+                // Player unchecked everything they can see. Draw from the visible roster rather than
+                // silently re-introducing hidden characters.
+                Log.Warn("[CharacterManager] random pool empty after filter; falling back to the in-select-visible roster.");
+                return enabled;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("[CharacterManager] random pool: pool filter failed (" + e.Message + "); using in-select-visible roster.");
+                return enabled;
             }
         }
     }

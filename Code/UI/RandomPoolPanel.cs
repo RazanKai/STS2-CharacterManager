@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CharacterManager;
 using CharacterManager.Config;
 using Godot;
@@ -108,12 +109,21 @@ namespace CharacterManager.UI
                 rows.AddChild(MakeRow(c));
         }
 
-        /// <summary>The drawable roster, in <see cref="CharacterHelper.GetAllCharacters"/> order. Shows all characters so they can be toggled In/Out.</summary>
+        /// <summary>
+        /// The roster shown in the panel, in <see cref="CharacterHelper.GetAllCharacters"/> order.
+        /// Characters hidden from the in-select grid (<see cref="EnabledStore"/>) are omitted: they
+        /// can't be drawn at random (see <see cref="RandomPoolStore.BuildLocalPool"/>), so listing a
+        /// toggle for them would be misleading. Base characters are always enabled, so only disabled
+        /// customs are filtered out. Re-enabling a character in-select restores it here with its
+        /// stored random-pool state intact.
+        /// </summary>
         private static List<CharacterModel> GetDrawableCharacters()
         {
             try
             {
-                return CharacterHelper.GetAllCharacters();
+                return CharacterHelper.GetAllCharacters()
+                    .Where(c => EnabledStore.IsEnabled(c.Id))
+                    .ToList();
             }
             catch (Exception e)
             {
