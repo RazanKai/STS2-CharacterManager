@@ -8,11 +8,12 @@ obj/
 
 # Local working docs (not shared)
 CLAUDE.md
-ROADMAP.md
-OPENCODE.md
-PLAN-random-pool.md
+PLAN-*.md
+
+# Local release-prep artifacts (not shared)
 *.zip
+nexus-description-*.bbcode
+thumbnail-preview.png
 
 # Steam Workshop uploader + workspace (local tooling)
 workshop-upload/
-mod-fingerprint.txt
