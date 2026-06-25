@@ -85,6 +85,32 @@ namespace CharacterManager.Analytics
         public int Count;
     }
 
+    /// <summary>One ancient (Neow/elder) option offered in a run, with whether it was taken (M11).</summary>
+    public sealed class AncientRec
+    {
+        public string Key = "";    // Title.LocEntryKey — stable identity (caveat 7)
+        public string Name = "";   // localized display text
+        public bool Chosen;
+    }
+
+    /// <summary>
+    /// Aggregated pick / win-rate stats for one relic, potion, or ancient option across a run set
+    /// (M11). Offered/Picks are per-occurrence; RunsWith/WinsWith are de-duped once per run.
+    /// </summary>
+    public sealed class PickStat
+    {
+        public string Key = "";
+        public string Name = "";
+        public ModelId Id = ModelId.none;   // ModelId.none for ancients (identified by Key)
+        public int Offered;
+        public int Picks;
+        public int RunsWith;
+        public int WinsWith;
+
+        public double PickRatePct => Offered > 0 ? 100.0 * Picks / Offered : -1.0;
+        public double WinRatePct => RunsWith > 0 ? 100.0 * WinsWith / RunsWith : -1.0;
+    }
+
     /// <summary>Aggregated stats for one card (or upgraded variant) across a run set (M9).</summary>
     public sealed class CardStat
     {
@@ -135,6 +161,18 @@ namespace CharacterManager.Analytics
         public List<CombatRec> Combats = new();
         /// <summary>How this run ended (death attribution, caveat 4).</summary>
         public DeathInfo Death;
+
+        // ─── Per-run inventory facts (M11) ───────────────────────────────────
+        /// <summary>Relics offered in a choice this run (id + picked), per-occurrence.</summary>
+        public List<(ModelId id, bool picked)> RelicChoices = new();
+        /// <summary>Potions offered in a choice this run (id + picked), per-occurrence.</summary>
+        public List<(ModelId id, bool picked)> PotionChoices = new();
+        /// <summary>Relics the player had: union of final Relics, BoughtRelics, and chosen choices.</summary>
+        public List<ModelId> RelicsOwned = new();
+        /// <summary>Potions the player had: union of final Potions, BoughtPotions, and chosen choices.</summary>
+        public List<ModelId> PotionsOwned = new();
+        /// <summary>Ancient (Neow/elder) options offered this run, with their chosen flag.</summary>
+        public List<AncientRec> Ancients = new();
     }
 
     /// <summary>
@@ -243,6 +281,7 @@ namespace CharacterManager.Analytics
                             {
                                 ExtractCardFacts(entry, me.Id, summary);
                                 ExtractCombatFacts(entry, me.Id, summary);
+                                ExtractInventoryFacts(entry, me.Id, summary);
                             }
                         }
 
@@ -251,6 +290,14 @@ namespace CharacterManager.Analytics
                     if (me.Deck != null)
                         foreach (var c in me.Deck)
                             if (c?.Id != null) summary.DeckCards.Add(new CardRef(c.Id, c.CurrentUpgradeLevel));
+
+                    // Final relic/potion snapshots complete the "runs with" union for M11.
+                    if (me.Relics != null)
+                        foreach (var r in me.Relics)
+                            if (r?.Id != null) summary.RelicsOwned.Add(r.Id);
+                    if (me.Potions != null)
+                        foreach (var pot in me.Potions)
+                            if (pot?.Id != null) summary.PotionsOwned.Add(pot.Id);
 
                     summary.Death = ResolveDeath(h, summary);
 
@@ -623,6 +670,135 @@ namespace CharacterManager.Analytics
             for (int i = run.Combats.Count - 1; i >= 0; i--)
                 if (run.Combats[i].Id == run.Death.Id) return run.Combats[i].Tier;
             return RoomType.Monster;
+        }
+
+        /// <summary>Records this character's relic/potion/ancient choices at one floor (M11).</summary>
+        private static void ExtractInventoryFacts(MapPointHistoryEntry? entry, ulong playerId, RunSummary summary)
+        {
+            var stats = entry?.PlayerStats;
+            if (stats == null || stats.Count == 0) return;
+
+            PlayerMapPointHistoryEntry? pe = null;
+            foreach (var ps in stats)
+                if (ps.PlayerId == playerId) { pe = ps; break; }
+            if (pe == null && stats.Count == 1) pe = stats[0];
+            if (pe == null) return;
+
+            if (pe.RelicChoices != null)
+                foreach (var rc in pe.RelicChoices)
+                    if (rc.choice != null && rc.choice != ModelId.none)
+                    {
+                        summary.RelicChoices.Add((rc.choice, rc.wasPicked));
+                        if (rc.wasPicked) summary.RelicsOwned.Add(rc.choice);
+                    }
+
+            if (pe.PotionChoices != null)
+                foreach (var pc in pe.PotionChoices)
+                    if (pc.choice != null && pc.choice != ModelId.none)
+                    {
+                        summary.PotionChoices.Add((pc.choice, pc.wasPicked));
+                        if (pc.wasPicked) summary.PotionsOwned.Add(pc.choice);
+                    }
+
+            if (pe.BoughtRelics != null)
+                foreach (var id in pe.BoughtRelics)
+                    if (id != null && id != ModelId.none) summary.RelicsOwned.Add(id);
+            if (pe.BoughtPotions != null)
+                foreach (var id in pe.BoughtPotions)
+                    if (id != null && id != ModelId.none) summary.PotionsOwned.Add(id);
+
+            if (pe.AncientChoices != null)
+                foreach (var a in pe.AncientChoices)
+                {
+                    if (a?.Title == null) continue;
+                    string key = a.Title.LocEntryKey ?? "";
+                    if (string.IsNullOrEmpty(key)) continue;
+                    string name;
+                    try { name = a.Title.GetFormattedText(); }
+                    catch { name = key; }
+                    summary.Ancients.Add(new AncientRec { Key = key, Name = name, Chosen = a.WasChosen });
+                }
+        }
+
+        /// <summary>Per-relic or per-potion pick/win-rate aggregation over the filtered runs (M11).</summary>
+        private List<PickStat> ComputeOwnedChoiceStats(
+            Func<RunSummary, List<(ModelId id, bool picked)>> choices,
+            Func<RunSummary, List<ModelId>> owned)
+        {
+            var map = new Dictionary<string, PickStat>();
+            PickStat Get(ModelId id)
+            {
+                string key = id.Entry;
+                if (!map.TryGetValue(key, out var st))
+                {
+                    st = new PickStat { Key = key, Id = id, Name = NameResolver.Resolve(id) };
+                    map[key] = st;
+                }
+                return st;
+            }
+
+            foreach (var run in Runs)
+            {
+                var seen = new HashSet<string>();
+                foreach (var id in owned(run))
+                {
+                    if (id == ModelId.none) continue;
+                    var st = Get(id);
+                    if (seen.Add(st.Key)) { st.RunsWith++; if (run.Win) st.WinsWith++; }
+                }
+                foreach (var (id, picked) in choices(run))
+                {
+                    if (id == ModelId.none) continue;
+                    var st = Get(id);
+                    st.Offered++;
+                    if (picked) st.Picks++;
+                }
+            }
+            return new List<PickStat>(map.Values);
+        }
+
+        /// <summary>Relic pick/win-rate stats over the filtered runs (M11).</summary>
+        public List<PickStat> ComputeRelicStats() =>
+            ComputeOwnedChoiceStats(r => r.RelicChoices, r => r.RelicsOwned);
+
+        /// <summary>Potion pick/win-rate stats over the filtered runs (M11).</summary>
+        public List<PickStat> ComputePotionStats() =>
+            ComputeOwnedChoiceStats(r => r.PotionChoices, r => r.PotionsOwned);
+
+        /// <summary>
+        /// Ancient (Neow/elder) pick/win-rate stats over the filtered runs (M11). Identity is the
+        /// option's <see cref="LocString.LocEntryKey"/> (caveat 7). Offered/Picks are per-occurrence;
+        /// RunsWith/WinsWith count runs where the option was taken (de-duped).
+        /// </summary>
+        public List<PickStat> ComputeAncientStats()
+        {
+            var map = new Dictionary<string, PickStat>();
+            PickStat Get(string key, string name)
+            {
+                if (!map.TryGetValue(key, out var st))
+                {
+                    st = new PickStat { Key = key, Name = string.IsNullOrEmpty(name) ? key : name };
+                    map[key] = st;
+                }
+                return st;
+            }
+
+            foreach (var run in Runs)
+            {
+                var chosenSeen = new HashSet<string>();
+                foreach (var a in run.Ancients)
+                {
+                    if (string.IsNullOrEmpty(a.Key)) continue;
+                    var st = Get(a.Key, a.Name);
+                    st.Offered++;
+                    if (a.Chosen)
+                    {
+                        st.Picks++;
+                        if (chosenSeen.Add(a.Key)) { st.RunsWith++; if (run.Win) st.WinsWith++; }
+                    }
+                }
+            }
+            return new List<PickStat>(map.Values);
         }
 
         /// <summary>Nearest-rank percentile of an int sample (0 if empty). Copies + sorts; caller-sized lists are small.</summary>

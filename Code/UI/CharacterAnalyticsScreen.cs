@@ -288,6 +288,7 @@ namespace CharacterManager.UI
                 AddRunDetailsSection(agg, suffix);
                 AddCardSections(agg);
                 AddCombatSections(agg);
+                AddInventorySections(agg);
                 AddAscensionBars(agg, suffix);
                 AddActBars(agg, suffix);
                 AddFloorBars(agg, suffix);
@@ -736,6 +737,103 @@ namespace CharacterManager.UI
             RoomType.Boss => "Boss",
             _ => tier.ToString(),
         };
+
+        // ─── Relic / potion / ancient analytics (M11) ────────────────────────
+
+        private void AddInventorySections(CharacterAnalytics agg)
+        {
+            AddPickGroup("Relics", agg.ComputeRelicStats(), includeMostPicked: true);
+            AddPickGroup("Potions", agg.ComputePotionStats(), includeMostPicked: false);
+            AddAncientSections(agg.ComputeAncientStats());
+        }
+
+        /// <summary>Most-picked (optional) + highest/lowest win-rate lists for relics or potions.</summary>
+        private void AddPickGroup(string noun, List<PickStat> stats, bool includeMostPicked)
+        {
+            bool any = false;
+            foreach (var s in stats) if (s.RunsWith > 0 || s.Offered > 0) { any = true; break; }
+            if (!any) return;
+
+            if (includeMostPicked)
+            {
+                var picked = new List<PickStat>(stats);
+                picked.RemoveAll(s => s.Picks <= 0);
+                if (picked.Count > 0)
+                {
+                    picked.Sort((a, b) => b.Picks.CompareTo(a.Picks));
+                    AddPickListSection($"Most Picked {noun}", picked,
+                        s => $"{s.Picks} pick{(s.Picks == 1 ? "" : "s")}" + (s.Offered > 0 ? $"  {s.PickRatePct:0.#}%" : ""),
+                        s => s.Picks, UiTheme.Heading);
+                }
+            }
+
+            var rated = new List<PickStat>(stats);
+            rated.RemoveAll(s => s.RunsWith < CardMinSample);
+            if (rated.Count == 0) return;
+
+            var best = new List<PickStat>(rated);
+            best.Sort((a, b) => b.WinRatePct.CompareTo(a.WinRatePct));
+            AddPickListSection($"{noun} — Highest Win Rate  (≥{CardMinSample} runs)", best,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Good, 100f);
+
+            var worst = new List<PickStat>(rated);
+            worst.Sort((a, b) => a.WinRatePct.CompareTo(b.WinRatePct));
+            AddPickListSection($"{noun} — Lowest Win Rate  (≥{CardMinSample} runs)", worst,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Bad, 100f);
+        }
+
+        private void AddAncientSections(List<PickStat> ancients)
+        {
+            bool any = false;
+            foreach (var s in ancients) if (s.Offered > 0) { any = true; break; }
+            if (!any) return;
+
+            // Most-taken ancient options (pick rate, min offers).
+            var picked = new List<PickStat>(ancients);
+            picked.RemoveAll(s => s.Offered < CardMinSample);
+            picked.Sort((a, b) =>
+            {
+                int c = b.PickRatePct.CompareTo(a.PickRatePct);
+                return c != 0 ? c : b.Picks.CompareTo(a.Picks);
+            });
+            AddPickListSection($"Ancient Choices — Most Taken  (≥{CardMinSample} offers)", picked,
+                s => $"{s.PickRatePct:0.#}% taken ({s.Picks}/{s.Offered})",
+                s => (float)Math.Max(0, s.PickRatePct), UiTheme.Heading, 100f);
+
+            // Win rate when an ancient option was taken (min chosen runs).
+            var rated = new List<PickStat>(ancients);
+            rated.RemoveAll(s => s.RunsWith < CardMinSample);
+            if (rated.Count > 0)
+            {
+                rated.Sort((a, b) => b.WinRatePct.CompareTo(a.WinRatePct));
+                AddPickListSection($"Ancient Choices — Highest Win Rate  (≥{CardMinSample} taken)", rated,
+                    s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                    s => (float)Math.Max(0, s.WinRatePct), UiTheme.Good, 100f);
+            }
+        }
+
+        /// <summary>One capped, bar-ranked pick-stat list (mirrors <see cref="AddCardListSection"/>).</summary>
+        private void AddPickListSection(string heading, List<PickStat> list,
+            Func<PickStat, string> value, Func<PickStat, float> weight, Color color, float maxWeight = 0f)
+        {
+            if (list.Count == 0) return;
+
+            int shown = Math.Min(CardListLimit, list.Count);
+            string h = list.Count > shown ? $"{heading}  (top {shown} of {list.Count})" : heading;
+            var panel = MakeSectionPanel(h, out var body);
+
+            float max = maxWeight;
+            if (max <= 0f) { max = 1f; for (int i = 0; i < shown; i++) max = Math.Max(max, weight(list[i])); }
+
+            for (int i = 0; i < shown; i++)
+            {
+                var s = list[i];
+                body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
+            }
+            _contentContainer!.AddChild(panel);
+        }
 
         private void AddAscensionBars(CharacterAnalytics agg, string label)
         {

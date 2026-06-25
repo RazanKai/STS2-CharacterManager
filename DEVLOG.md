@@ -173,6 +173,26 @@ Combat-side analytics from the same cached per-run walk. Tier comes from `RoomTy
 
 **Files:** `Code/Analytics/CharacterAnalytics.cs` (CombatRec/DeathSource/DeathInfo/EncounterStat/TierStat/DeathCauseStat, RunSummary combat fields, ExtractCombatFacts, ResolveDeath, Compute{Encounter,Tier,DeathCause}Stats, Percentile), `Code/UI/CharacterAnalyticsScreen.cs` (combat sections).
 
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** Combat by Tier table + deadliest/most-damaging/death-cause lists render correctly.
+
+**M11 — Relics, potions, ancients — IN PROGRESS (beta, built + installed, manual test pending)**
+
+Pick / win-rate lists for relics, potions, and ancient (Neow/elder) choices — same pattern as M9 cards, from the same cached per-run walk.
+
+**Deep parse (`CharacterAnalytics`):**
+- `ExtractInventoryFacts` records per floor: relic/potion choices (`ModelChoiceHistoryEntry.choice` + `wasPicked`), `BoughtRelics`/`BoughtPotions`, and ancient options (`AncientChoiceHistoryEntry.Title` + `WasChosen`). Chosen choices + buys feed the "owned" union; final `RunHistoryPlayer.Relics`/`Potions` snapshots complete it.
+- Generic `ComputeOwnedChoiceStats` powers `ComputeRelicStats` / `ComputePotionStats` (Offered/Picks per-occurrence; RunsWith/WinsWith de-duped per run over the owned union). `ComputeAncientStats` identifies options by `Title.LocEntryKey` (caveat 7) and shows them by localized text; RunsWith/WinsWith = runs where taken.
+
+**UI (`CharacterAnalyticsScreen`):**
+- Relics: **Most Picked** + **Highest / Lowest Win Rate** (≥3 runs).
+- Potions: **Highest / Lowest Win Rate** (≥3 runs).
+- Ancients: **Most Taken** (pick rate, ≥3 offers) + **Highest Win Rate** (≥3 taken).
+- Generic `AddPickListSection` reused across all; filter-aware; sections skipped when no data.
+
+**Scope:** caveat 7's Sea-Glass-variant normalization not special-cased (grouping by full LocEntryKey is correct, just slightly more granular). Optional gold-economy summary and per-act path-stats grid **deferred** (plan marks them optional). Caveat 2 (colored shop card buys) and caveat 8 (Elo) remain out of scope → M13.
+
+**Files:** `Code/Analytics/CharacterAnalytics.cs` (PickStat/AncientRec, RunSummary inventory fields, ExtractInventoryFacts, ComputeOwnedChoiceStats + Relic/Potion/Ancient stats), `Code/UI/CharacterAnalyticsScreen.cs` (inventory sections + AddPickListSection).
+
 **Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending.**
 
 ## Release History
