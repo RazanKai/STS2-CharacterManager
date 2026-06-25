@@ -12,8 +12,8 @@ PLAN-*.md
 
 # Local release-prep artifacts (not shared)
 *.zip
-nexus-description-*.bbcode
-thumbnail-preview.png
 
 # Steam Workshop uploader + workspace (local tooling)
 workshop-upload/
+references/
+ANALYTICS_PLAN.md
