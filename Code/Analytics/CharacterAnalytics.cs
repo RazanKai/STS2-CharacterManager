@@ -9,6 +9,42 @@ namespace CharacterManager.Analytics
 {
     public enum GameModeFilter { All, Standard, Custom, Daily }
 
+    /// <summary>A single card offered in a reward this run, with whether it was taken (M9).</summary>
+    public sealed class CardChoiceRec
+    {
+        public ModelId Id = ModelId.none;
+        public int Upgrade;
+        public bool Picked;
+    }
+
+    /// <summary>A card instance reference (id + upgrade level) recorded in a run (M9).</summary>
+    public readonly struct CardRef
+    {
+        public readonly ModelId Id;
+        public readonly int Upgrade;
+        public CardRef(ModelId id, int upgrade) { Id = id; Upgrade = upgrade; }
+    }
+
+    /// <summary>Aggregated stats for one card (or upgraded variant) across a run set (M9).</summary>
+    public sealed class CardStat
+    {
+        public string Key = "";
+        public string Name = "";
+        public ModelId Id = ModelId.none;
+        public bool Upgraded;     // true if this entry is an upgraded variant (upgrade-aware mode)
+        public int Offered;       // times shown in a card reward (per occurrence)
+        public int Picks;         // times chosen from a reward (per occurrence)
+        public int RunsWith;      // runs whose final/gained deck included this card (once per run)
+        public int WinsWith;      // wins among RunsWith
+        public int Removed;       // times removed (per occurrence)
+        public int Upgrades;      // times upgraded (per occurrence)
+
+        /// <summary>Pick rate %, or -1 if never offered.</summary>
+        public double PickRatePct => Offered > 0 ? 100.0 * Picks / Offered : -1.0;
+        /// <summary>Win rate % among runs that had it, or -1 if it was never in a deck.</summary>
+        public double WinRatePct => RunsWith > 0 ? 100.0 * WinsWith / RunsWith : -1.0;
+    }
+
     /// <summary>One run's worth of fields, extracted from a <see cref="RunHistory"/> file.</summary>
     public sealed class RunSummary
     {
@@ -21,6 +57,18 @@ namespace CharacterManager.Analytics
         public int ActsReached;
         public int FloorsReached;
         public GameMode GameMode;    // which game mode this run was in
+
+        // ─── Per-run card facts (M9), populated by the deep parse and aggregated on demand ───
+        /// <summary>Every card offered in a reward this run, with its picked flag (per-occurrence).</summary>
+        public List<CardChoiceRec> CardChoices = new();
+        /// <summary>Cards the player ended up with: union of floor-by-floor CardsGained and the final
+        /// deck snapshot (caveat 1 — starter cards aren't in CardsGained). May contain duplicates;
+        /// aggregation de-dupes per run (caveat 3).</summary>
+        public List<CardRef> DeckCards = new();
+        /// <summary>Cards removed this run (per-occurrence).</summary>
+        public List<CardRef> RemovedCards = new();
+        /// <summary>Card ids upgraded this run (per-occurrence).</summary>
+        public List<ModelId> UpgradedCardIds = new();
     }
 
     /// <summary>
@@ -96,10 +144,12 @@ namespace CharacterManager.Analytics
                     RunHistory? h = result.SaveData;
                     if (h == null) continue;
 
-                    bool matches = false;
+                    // Find this character's player (for its NetId, used to pick the right per-floor
+                    // PlayerStats in multiplayer, and for the final deck snapshot).
+                    RunHistoryPlayer? me = null;
                     foreach (var p in h.Players)
-                        if (p.Character == characterId) { matches = true; break; }
-                    if (!matches) continue;
+                        if (p.Character == characterId) { me = p; break; }
+                    if (me == null) continue;
 
                     // Acts/floors *reached* come from MapPointHistory (outer list = acts actually
                     // entered, inner lists = floors within each act). h.Acts is the run's full planned
@@ -107,9 +157,31 @@ namespace CharacterManager.Analytics
                     // "acts reached" wrongly reports e.g. a floor-1 death as having reached act 3.
                     int actsReached = h.MapPointHistory?.Count ?? 0;
                     int floors = 0;
+                    var summary = new RunSummary
+                    {
+                        Seed = h.Seed ?? "",
+                        StartTime = h.StartTime,
+                        Win = h.Win,
+                        Abandoned = h.WasAbandoned,
+                        Ascension = h.Ascension,
+                        RunTime = h.RunTime,
+                        ActsReached = actsReached,
+                        GameMode = h.GameMode,
+                    };
                     if (h.MapPointHistory != null)
                         foreach (var rooms in h.MapPointHistory)
-                            floors += rooms?.Count ?? 0;
+                        {
+                            if (rooms == null) continue;
+                            floors += rooms.Count;
+                            foreach (var entry in rooms)
+                                ExtractCardFacts(entry, me.Id, summary);
+                        }
+
+                    // Final deck snapshot completes the "runs with" union (caveat 1: starter cards and
+                    // anything not logged in CardsGained still show up here).
+                    if (me.Deck != null)
+                        foreach (var c in me.Deck)
+                            if (c?.Id != null) summary.DeckCards.Add(new CardRef(c.Id, c.CurrentUpgradeLevel));
 
                     a.Total++;
                     if (h.Win) a.Wins++;
@@ -148,18 +220,8 @@ namespace CharacterManager.Analytics
                     var cur = a.PerAscension.TryGetValue(asc, out var v) ? v : (0, 0);
                     a.PerAscension[asc] = h.Win ? (cur.Item1 + 1, cur.Item2) : (cur.Item1, cur.Item2 + 1);
 
-                    a.Runs.Add(new RunSummary
-                    {
-                        Seed = h.Seed ?? "",
-                        StartTime = h.StartTime,
-                        Win = h.Win,
-                        Abandoned = h.WasAbandoned,
-                        Ascension = asc,
-                        RunTime = h.RunTime,
-                        ActsReached = actsReached,
-                        FloorsReached = floors,
-                        GameMode = h.GameMode,
-                    });
+                    summary.FloorsReached = floors;
+                    a.Runs.Add(summary);
                 }
                 catch (Exception e)
                 {
@@ -258,6 +320,98 @@ namespace CharacterManager.Analytics
             }
             double rate = decisive > 0 ? 100.0 * wins / decisive : -1.0;
             return (wins, decisive, rate);
+        }
+
+        /// <summary>
+        /// Pulls this character's card events out of one floor entry into <paramref name="summary"/>.
+        /// In multiplayer a floor has one <see cref="PlayerMapPointHistoryEntry"/> per player keyed by
+        /// net id; we match <paramref name="playerId"/>, falling back to the sole entry in single-player.
+        /// </summary>
+        private static void ExtractCardFacts(MegaCrit.Sts2.Core.Runs.History.MapPointHistoryEntry? entry, ulong playerId, RunSummary summary)
+        {
+            var stats = entry?.PlayerStats;
+            if (stats == null || stats.Count == 0) return;
+
+            MegaCrit.Sts2.Core.Runs.PlayerMapPointHistoryEntry? pe = null;
+            foreach (var ps in stats)
+                if (ps.PlayerId == playerId) { pe = ps; break; }
+            if (pe == null && stats.Count == 1) pe = stats[0];
+            if (pe == null) return;
+
+            if (pe.CardsGained != null)
+                foreach (var c in pe.CardsGained)
+                    if (c?.Id != null) summary.DeckCards.Add(new CardRef(c.Id, c.CurrentUpgradeLevel));
+
+            if (pe.CardChoices != null)
+                foreach (var ch in pe.CardChoices)
+                    if (ch.Card?.Id != null)
+                        summary.CardChoices.Add(new CardChoiceRec { Id = ch.Card.Id, Upgrade = ch.Card.CurrentUpgradeLevel, Picked = ch.wasPicked });
+
+            if (pe.CardsRemoved != null)
+                foreach (var c in pe.CardsRemoved)
+                    if (c?.Id != null) summary.RemovedCards.Add(new CardRef(c.Id, c.CurrentUpgradeLevel));
+
+            if (pe.UpgradedCards != null)
+                foreach (var id in pe.UpgradedCards)
+                    if (id != null) summary.UpgradedCardIds.Add(id);
+        }
+
+        /// <summary>
+        /// Aggregates per-card stats over the (already filtered) run list (M9). Cheap, in-memory —
+        /// re-runs on each filter change off the per-run facts captured during the deep parse, so the
+        /// card lists honour the active game-mode / ascension / recent-N filter for free.
+        ///
+        /// <para>Counting rules: Offered/Picks are per-occurrence (a card offered twice in a run counts
+        /// twice); RunsWith/WinsWith are de-duped once per run (caveat 3). RunsWith's source is the
+        /// union of floor CardsGained and the final deck snapshot (caveat 1). The min-sample threshold
+        /// (caveat 6) is applied by the UI when ranking, not here.</para>
+        ///
+        /// <para><paramref name="upgradeAware"/> = false collapses Strike and Strike+ into one entry
+        /// (the default); true keeps upgraded variants separate.</para>
+        /// </summary>
+        public List<CardStat> ComputeCardStats(bool upgradeAware)
+        {
+            var map = new Dictionary<string, CardStat>();
+
+            CardStat GetStat(ModelId id, int upgrade)
+            {
+                bool up = upgradeAware && upgrade > 0;
+                string key = up ? id.Entry + "+" : id.Entry;
+                if (!map.TryGetValue(key, out var st))
+                {
+                    st = new CardStat
+                    {
+                        Key = key,
+                        Id = id,
+                        Upgraded = up,
+                        Name = NameResolver.Resolve(id) + (up ? "+" : ""),
+                    };
+                    map[key] = st;
+                }
+                return st;
+            }
+
+            foreach (var run in Runs)
+            {
+                // RunsWith / WinsWith — once per unique card key per run (caveat 3).
+                var seen = new HashSet<string>();
+                foreach (var c in run.DeckCards)
+                {
+                    var st = GetStat(c.Id, c.Upgrade);
+                    if (seen.Add(st.Key)) { st.RunsWith++; if (run.Win) st.WinsWith++; }
+                }
+                // Offered / Picks — per occurrence.
+                foreach (var ch in run.CardChoices)
+                {
+                    var st = GetStat(ch.Id, ch.Upgrade);
+                    st.Offered++;
+                    if (ch.Picked) st.Picks++;
+                }
+                foreach (var c in run.RemovedCards) GetStat(c.Id, c.Upgrade).Removed++;
+                foreach (var id in run.UpgradedCardIds) GetStat(id, 0).Upgrades++;
+            }
+
+            return new List<CardStat>(map.Values);
         }
 
         private static bool ModeMatchesFilter(GameMode mode, GameModeFilter filter)

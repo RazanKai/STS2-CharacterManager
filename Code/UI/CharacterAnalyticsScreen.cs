@@ -49,8 +49,14 @@ namespace CharacterManager.UI
         private static readonly int[] RecentSteps = { 0, 10, 50, 100 };
         private int _minAscension;   // 0 = any
         private int _recentCount;    // 0 = all
+        private bool _cardUpgradeAware;  // M9: collapse Strike/Strike+ (false) or keep separate (true)
         private Button? _ascBtn;
         private Button? _recentBtn;
+        private Button? _upgradeBtn;
+
+        // M9 ranked-list sizing.
+        private const int CardListLimit = 10;     // rows shown per card list
+        private const int CardMinSample = 3;      // min offers/runs before a rate is trusted (caveat 6)
 
         protected override Control? InitialFocusedControl => null;
 
@@ -175,10 +181,23 @@ namespace CharacterManager.UI
             _recentBtn.TooltipText = "Limit to the most recent runs";
             _recentBtn.Pressed += CycleRecent;
             bar.AddChild(_recentBtn);
+
+            _upgradeBtn = UiTheme.MakeButton(UpgradeLabel(), UiTheme.Body, 120f);
+            _upgradeBtn.TooltipText = "Treat upgraded cards (Strike+) as separate from their base card";
+            _upgradeBtn.Pressed += ToggleUpgradeAware;
+            bar.AddChild(_upgradeBtn);
         }
 
         private string AscLabel() => _minAscension <= 0 ? "Asc: Any" : $"Asc: {_minAscension}+";
         private string RecentLabel() => _recentCount <= 0 ? "Recent: All" : $"Recent: {_recentCount}";
+        private string UpgradeLabel() => _cardUpgradeAware ? "Upgrades: On" : "Upgrades: Off";
+
+        private void ToggleUpgradeAware()
+        {
+            _cardUpgradeAware = !_cardUpgradeAware;
+            if (_upgradeBtn != null) _upgradeBtn.Text = UpgradeLabel();
+            UpdateDisplay();
+        }
 
         private void CycleAscension()
         {
@@ -265,6 +284,7 @@ namespace CharacterManager.UI
                     AddCustomDailySection(agg);
 
                 AddRunDetailsSection(agg, suffix);
+                AddCardSections(agg);
                 AddAscensionBars(agg, suffix);
                 AddActBars(agg, suffix);
                 AddFloorBars(agg, suffix);
@@ -313,9 +333,11 @@ namespace CharacterManager.UI
             _currentFilter = GameModeFilter.All;
             _minAscension = 0;
             _recentCount = 0;
+            _cardUpgradeAware = false;
             foreach (var (mode, btn) in _filterBtns) RefreshFilterButton(btn, mode);
             if (_ascBtn != null) _ascBtn.Text = AscLabel();
             if (_recentBtn != null) _recentBtn.Text = RecentLabel();
+            if (_upgradeBtn != null) _upgradeBtn.Text = UpgradeLabel();
 
             // Paint a placeholder first, then defer the parse one frame so the screen appears
             // immediately instead of stalling on disk reads (M8, plan §4a). The aggregate is read
@@ -495,6 +517,82 @@ namespace CharacterManager.UI
                 var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxCount - count));
                 body.AddChild(UiTheme.MakeBarRow($"{f} floor{(f == 1 ? "" : "s")}", BarLabelWidth, bar,
                     $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
+            }
+            _contentContainer!.AddChild(panel);
+        }
+
+        // ─── Card analytics (M9) ─────────────────────────────────────────────
+
+        /// <summary>Builds the four card ranked lists from the filtered aggregate.</summary>
+        private void AddCardSections(CharacterAnalytics agg)
+        {
+            var stats = agg.ComputeCardStats(_cardUpgradeAware);
+
+            bool anyData = false;
+            foreach (var s in stats)
+                if (s.Offered > 0 || s.RunsWith > 0) { anyData = true; break; }
+            if (!anyData)
+            {
+                AddTextSection("Cards",
+                    "No card data recorded for these runs yet. Card pick / win-rate stats come from per-floor reward history, which runs from older builds may not include.");
+                return;
+            }
+
+            // Most picked — by raw pick count.
+            var mostPicked = new List<CardStat>(stats);
+            mostPicked.RemoveAll(s => s.Picks <= 0);
+            mostPicked.Sort((a, b) => b.Picks.CompareTo(a.Picks));
+            AddCardListSection("Most Picked Cards", mostPicked,
+                s => $"{s.Picks} pick{(s.Picks == 1 ? "" : "s")}" + (s.Offered > 0 ? $"  {s.PickRatePct:0.#}%" : ""),
+                s => s.Picks, UiTheme.Heading);
+
+            // Highest / lowest win rate among cards seen in enough runs (caveat 6).
+            var rated = new List<CardStat>(stats);
+            rated.RemoveAll(s => s.RunsWith < CardMinSample);
+
+            var best = new List<CardStat>(rated);
+            best.Sort((a, b) => b.WinRatePct.CompareTo(a.WinRatePct));
+            AddCardListSection($"Highest Win Rate  (≥{CardMinSample} runs)", best,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Good, 100f);
+
+            var worst = new List<CardStat>(rated);
+            worst.Sort((a, b) => a.WinRatePct.CompareTo(b.WinRatePct));
+            AddCardListSection($"Lowest Win Rate  (≥{CardMinSample} runs)", worst,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Bad, 100f);
+
+            // Most avoided — offered enough times but rarely taken (caveat 6).
+            var avoided = new List<CardStat>(stats);
+            avoided.RemoveAll(s => s.Offered < CardMinSample);
+            avoided.Sort((a, b) =>
+            {
+                int c = a.PickRatePct.CompareTo(b.PickRatePct);
+                return c != 0 ? c : b.Offered.CompareTo(a.Offered);
+            });
+            AddCardListSection($"Most Avoided  (≥{CardMinSample} offers)", avoided,
+                s => $"{s.PickRatePct:0.#}% taken ({s.Picks}/{s.Offered})",
+                s => (float)Math.Max(0, s.PickRatePct), UiTheme.Muted, 100f);
+        }
+
+        /// <summary>One capped, bar-ranked card list. <paramref name="maxWeight"/> &gt; 0 fixes the bar
+        /// scale (e.g. 100 for percentages); 0 auto-scales to the largest shown value.</summary>
+        private void AddCardListSection(string heading, List<CardStat> list,
+            Func<CardStat, string> value, Func<CardStat, float> weight, Color color, float maxWeight = 0f)
+        {
+            if (list.Count == 0) return;
+
+            int shown = Math.Min(CardListLimit, list.Count);
+            string h = list.Count > shown ? $"{heading}  (top {shown} of {list.Count})" : heading;
+            var panel = MakeSectionPanel(h, out var body);
+
+            float max = maxWeight;
+            if (max <= 0f) { max = 1f; for (int i = 0; i < shown; i++) max = Math.Max(max, weight(list[i])); }
+
+            for (int i = 0; i < shown; i++)
+            {
+                var s = list[i];
+                body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
             }
             _contentContainer!.AddChild(panel);
         }

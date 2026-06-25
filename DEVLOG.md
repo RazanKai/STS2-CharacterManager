@@ -134,6 +134,25 @@ First milestone of the analytics expansion (`ANALYTICS_PLAN.md`). Ships the cros
 
 **Verification:** `build_mod` clean (0 errors; 3 pre-existing nullable warnings), `validate_mod` valid. **Verified in-game:** win-rate windows, Asc/Recent filters, and floor-reached bars render correctly; act distribution now reflects real progression.
 
+**M9 — Card analytics (headline feature) — IN PROGRESS (beta, built + installed, manual test pending)**
+
+The biggest analytics upgrade: per-card pick / win-rate / avoidance lists, all from data already in the `.run` files. Built on the M8 cache + name resolver + ranked-row widget; respects every existing filter for free.
+
+**Deep parse (`CharacterAnalytics`):**
+- The per-run walk (already cached) now also extracts this character's card facts into new `RunSummary` fields: `CardChoices` (each offered card + `wasPicked`, per-occurrence), `DeckCards` (floor `CardsGained` ∪ the final `RunHistoryPlayer.Deck` snapshot), `RemovedCards`, `UpgradedCardIds`. Floor entries are matched to the character's player by `RunHistoryPlayer.Id` ↔ `PlayerMapPointHistoryEntry.PlayerId`, with a single-player fallback.
+- `ComputeCardStats(bool upgradeAware)` aggregates over the (filtered) run list into `CardStat` rows. Counting honours the §3 caveats: Offered/Picks per-occurrence; **RunsWith/WinsWith de-duped once per run** (caveat 3); **RunsWith sourced from the gained∪final-deck union** so starter cards aren't invisible (caveat 1). Re-runs cheaply on each filter change off the cached per-run facts.
+
+**UI (`CharacterAnalyticsScreen`):**
+- Four ranked lists via `UiTheme.MakeRankedRow`: **Most Picked** (by pick count + pick %), **Highest / Lowest Win Rate** (runs-with win %, min 3 runs — caveat 6), **Most Avoided** (lowest pick rate, min 3 offers). Each capped at top 10 with an "of N" note.
+- **Upgrades Off/On** toggle added to the filter bar: collapses Strike/Strike+ by default, or splits upgraded variants (caveat 4b / plan §4b). Card identity is the base `ModelId` (upgrade is a separate `CurrentUpgradeLevel` field), so collapse is the natural default.
+- Names resolved through the M8 `NameResolver` (localized title, graceful fallback). Empty-state note for runs from older builds that predate per-floor reward recording.
+
+**Data caveats encoded:** 1 (starter cards via deck union), 3 (once-per-run HashSet), 4b (upgrade-aware grouping), 6 (min-sample threshold). Caveats 2 (colored shop buys not captured) and 5/7/8 (encounters/ancients/Elo) are out of M9 scope — later milestones.
+
+**Files:** `Code/Analytics/CharacterAnalytics.cs` (CardChoiceRec/CardRef/CardStat, RunSummary card fields, ExtractCardFacts, ComputeCardStats), `Code/UI/CharacterAnalyticsScreen.cs` (card sections + upgrade toggle).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending.**
+
 ## Release History
 
 ### v0.3.1 (2026-06-18) — Game v0.107.1 compatibility
