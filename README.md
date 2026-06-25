@@ -16,7 +16,12 @@ built-in charts.
   large portrait, win/loss, and quick actions.
 - **Stats visibility toggle** — show/hide each custom character in the Compendium stats.
 - **In-select enable/disable** — keep custom characters out of the character-select
-  roster without uninstalling them. *(Changes apply after a game restart — see Notes.)*
+  roster without uninstalling them. Applies immediately (no restart), and works for
+  characters added by character libraries (e.g. BaseLib/RitsuLib mods) too.
+- **Configurable Random pool** — when the **Random** option is selected, a pool panel
+  lets you pick exactly which characters Random may draw, with per-character In/Out
+  toggles and All/None shortcuts. Multiplayer-synced. Characters you've hidden in-select
+  are never drawn at random.
 - **Per-character info card** — starting HP/gold/energy, gender, starting deck (with a
   card-type composition chart), starting relics/potions, and unlock requirement.
 - **Run-history filtering** — jump straight to a character's runs in the game's own
@@ -32,9 +37,10 @@ built-in charts.
 
 ## Requirements
 
-- Slay the Spire 2 (min game version **0.107.0**)
-- [BaseLib](https://github.com/) (`Alchyr.Sts2.BaseLib`) — a separate installed mod,
-  declared as a dependency so it loads first.
+- Slay the Spire 2 (min game version **0.107.1**)
+- [BaseLib](https://steamcommunity.com/sharedfiles/filedetails/?id=3737335127)
+  (`Alchyr.Sts2.BaseLib`) — a separate installed mod, declared as a dependency so it
+  loads first.
 
 ## Installation
 
@@ -55,9 +61,9 @@ use **History**, **Analytics**, or **Info**. Toggle a custom character's **Stats
 
 ## Notes & limitations
 
-- **In-Select changes require a restart.** Character-select roster filtering only takes
-  effect when the select screen is first built, so toggling a character on/off applies
-  after a full game restart. This is surfaced in the UI.
+- **In-Select applies immediately.** Toggling a character on/off updates the
+  character-select roster without a restart (the cached select screen is rebuilt on
+  change), including characters injected by character libraries.
 - **Standard vs Custom/Daily stats.** The game only counts **Standard** runs toward its
   official win/loss totals; Custom and Daily runs are excluded. The analytics screen
   shows both, clearly separated, so the numbers won't appear to contradict each other.
