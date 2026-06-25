@@ -1,3 +1,4 @@
+using System;
 using Godot;
 using MegaCrit.Sts2.Core.Helpers;
 
@@ -292,6 +293,41 @@ namespace CharacterManager.UI
             l.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
             row.AddChild(l);
 
+            bar.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            row.AddChild(bar);
+
+            var v = MakeLabel(value, Body, BodyFontSize, HorizontalAlignment.Right);
+            v.CustomMinimumSize = new Vector2(valueWidth, 0f);
+            v.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            row.AddChild(v);
+
+            return row;
+        }
+
+        /// <summary>
+        /// A ranked-list row (M8, plan §4c): left <paramref name="name"/> that expands to fill,
+        /// a fixed-width proportional bar showing <paramref name="fillWeight"/> out of
+        /// <paramref name="maxWeight"/>, and a right-aligned <paramref name="value"/> column. The
+        /// shared row shape behind card / relic / encounter / death lists (M9+). Sorting and a
+        /// show-more affordance are layered on by the caller; this is just the row primitive.
+        /// </summary>
+        public static HBoxContainer MakeRankedRow(
+            string name, string value, float fillWeight, float maxWeight, Color fill,
+            float barWidth = 140f, float valueWidth = 96f, float height = 16f)
+        {
+            var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            row.AddThemeConstantOverride("separation", 10);
+
+            var n = MakeLabel(name, Body, BodyFontSize);
+            n.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            n.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            n.ClipText = true;
+            row.AddChild(n);
+
+            float empty = maxWeight > 0f ? Math.Max(0f, maxWeight - Math.Max(0f, fillWeight)) : 0f;
+            var bar = MakeBarTrack(height, new[] { (fill, Math.Max(0f, fillWeight)) }, empty);
+            bar.CustomMinimumSize = new Vector2(barWidth, height);
+            bar.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd; // keep the bar a fixed width, name takes the slack
             bar.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
             row.AddChild(bar);
 

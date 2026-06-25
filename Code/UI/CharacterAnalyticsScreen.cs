@@ -40,9 +40,17 @@ namespace CharacterManager.UI
         private Label? _statusLabel;
         private VBoxContainer? _contentContainer;
 
-        private CharacterAnalytics? _fullAgg;         // loaded once per open
+        private CharacterAnalytics? _fullAgg;         // loaded once per open (via AnalyticsCache)
         private GameModeFilter _currentFilter = GameModeFilter.All;
         private readonly List<(GameModeFilter Mode, Button Btn)> _filterBtns = new();
+
+        // Composite filter axes (M8): minimum ascension + most-recent-N window, cycled by two buttons.
+        private static readonly int[] AscSteps = { 0, 1, 5, 10, 15, 20 };
+        private static readonly int[] RecentSteps = { 0, 10, 50, 100 };
+        private int _minAscension;   // 0 = any
+        private int _recentCount;    // 0 = all
+        private Button? _ascBtn;
+        private Button? _recentBtn;
 
         protected override Control? InitialFocusedControl => null;
 
@@ -154,6 +162,40 @@ namespace CharacterManager.UI
                 bar.AddChild(btn);
                 _filterBtns.Add((mode, btn));
             }
+
+            // Spacer, then the two composite-filter cycle buttons (ascension floor + recent window).
+            bar.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
+
+            _ascBtn = UiTheme.MakeButton(AscLabel(), UiTheme.Body, 96f);
+            _ascBtn.TooltipText = "Minimum ascension to include";
+            _ascBtn.Pressed += CycleAscension;
+            bar.AddChild(_ascBtn);
+
+            _recentBtn = UiTheme.MakeButton(RecentLabel(), UiTheme.Body, 110f);
+            _recentBtn.TooltipText = "Limit to the most recent runs";
+            _recentBtn.Pressed += CycleRecent;
+            bar.AddChild(_recentBtn);
+        }
+
+        private string AscLabel() => _minAscension <= 0 ? "Asc: Any" : $"Asc: {_minAscension}+";
+        private string RecentLabel() => _recentCount <= 0 ? "Recent: All" : $"Recent: {_recentCount}";
+
+        private void CycleAscension()
+        {
+            int idx = Array.IndexOf(AscSteps, _minAscension);
+            idx = idx < 0 ? 0 : (idx + 1) % AscSteps.Length;
+            _minAscension = AscSteps[idx];
+            if (_ascBtn != null) _ascBtn.Text = AscLabel();
+            UpdateDisplay();
+        }
+
+        private void CycleRecent()
+        {
+            int idx = Array.IndexOf(RecentSteps, _recentCount);
+            idx = idx < 0 ? 0 : (idx + 1) % RecentSteps.Length;
+            _recentCount = RecentSteps[idx];
+            if (_recentBtn != null) _recentBtn.Text = RecentLabel();
+            UpdateDisplay();
         }
 
         private void RefreshFilterButton(Button btn, GameModeFilter mode)
@@ -187,6 +229,14 @@ namespace CharacterManager.UI
             var stats = GetStats(c);
             var full = _fullAgg;
 
+            if (full != null && full.LoadFailed)
+            {
+                AddTextSection("Run History",
+                    "Couldn't read run history yet (the save system may still be loading). Re-open this screen to retry.");
+                if (stats != null) AddSummarySection(stats);
+                return;
+            }
+
             if (stats == null && (full == null || full.Total == 0))
             {
                 AddTextSection("Summary",
@@ -194,35 +244,47 @@ namespace CharacterManager.UI
                 return;
             }
 
-            GameModeFilter filter = _currentFilter;
-
-            // Official Standard summary (always shown, from CharacterStats).
+            // Official, Standard-only lifetime summary (CharacterStats) — independent of the filters.
             if (stats != null)
                 AddSummarySection(stats);
 
-            // Filtered run-history view.
-            var agg = (full != null && filter != GameModeFilter.All)
-                ? full.GetFiltered(filter)
-                : full;
+            // Win-rate moving windows: scoped by game-mode + ascension, but NOT by the recent-N cap
+            // (the windows are themselves "last N"). Computed off its own filtered aggregate.
+            var windowAgg = full?.GetFiltered(new RunFilter(_currentFilter, _minAscension, 0));
+            if (windowAgg != null && windowAgg.Total > 0)
+                AddWinRateWindows(windowAgg);
+
+            // Main filtered view (mode + ascension + recent-N).
+            var agg = full?.GetFiltered(new RunFilter(_currentFilter, _minAscension, _recentCount));
 
             if (agg != null && agg.Total > 0)
             {
-                if (filter == GameModeFilter.All)
-                {
-                    // Show separate Custom/Daily section only in All view.
-                    if (full!.CustomTotal > 0)
-                        AddCustomDailySection(full);
-                }
+                string suffix = FilterSuffix();
 
-                string filterSuffix = filter == GameModeFilter.All ? "all runs" : $"{filter} runs";
-                AddRunDetailsSection(agg, filterSuffix);
-                AddAscensionBars(agg, filterSuffix);
-                AddActBars(agg, filterSuffix);
+                if (_currentFilter == GameModeFilter.All && agg.CustomTotal > 0)
+                    AddCustomDailySection(agg);
+
+                AddRunDetailsSection(agg, suffix);
+                AddAscensionBars(agg, suffix);
+                AddActBars(agg, suffix);
+                AddFloorBars(agg, suffix);
             }
-            else if (agg == null || agg.Total == 0)
+            else
             {
-                AddTextSection("Summary", $"No {filter.ToString().ToLowerInvariant()} runs recorded.");
+                AddTextSection("Run History", $"No runs match the current filter ({FilterSuffix()}).");
             }
+        }
+
+        /// <summary>Human-readable description of the active composite filter.</summary>
+        private string FilterSuffix()
+        {
+            var parts = new List<string>
+            {
+                _currentFilter == GameModeFilter.All ? "all runs" : $"{_currentFilter} runs",
+            };
+            if (_minAscension > 0) parts.Add($"A{_minAscension}+");
+            if (_recentCount > 0) parts.Add($"last {_recentCount}");
+            return string.Join(", ", parts);
         }
 
         // ─── Content (rebuilt each open) ──────────────────────────────────────
@@ -234,7 +296,7 @@ namespace CharacterManager.UI
             return null;
         }
 
-        private void PopulateContent()
+        private async void PopulateContent()
         {
             var c = _character;
             if (c == null)
@@ -247,9 +309,29 @@ namespace CharacterManager.UI
             if (_subtitleLabel != null) _subtitleLabel.Text = "Analytics";
             if (_statusLabel != null) _statusLabel.Text = ""; // clear any prior export message
 
-            // Load full aggregate once.
-            _fullAgg = CharacterAnalytics.Compute(c.Id);
+            // Reset all filter axes on each fresh open.
             _currentFilter = GameModeFilter.All;
+            _minAscension = 0;
+            _recentCount = 0;
+            foreach (var (mode, btn) in _filterBtns) RefreshFilterButton(btn, mode);
+            if (_ascBtn != null) _ascBtn.Text = AscLabel();
+            if (_recentBtn != null) _recentBtn.Text = RecentLabel();
+
+            // Paint a placeholder first, then defer the parse one frame so the screen appears
+            // immediately instead of stalling on disk reads (M8, plan §4a). The aggregate is read
+            // through AnalyticsCache, so re-opens of the same character are instant.
+            if (_contentContainer != null)
+                foreach (Node child in _contentContainer.GetChildren()) child.QueueFree();
+            AddTextSection("Run History", "Crunching run history…");
+
+            var tree = GetTree();
+            if (tree != null)
+                await ToSignal(tree, SceneTree.SignalName.ProcessFrame);
+
+            // The screen may have been popped or switched to another character during the await.
+            if (!IsInstanceValid(this) || _character != c) return;
+
+            _fullAgg = AnalyticsCache.Get(c.Id);
             UpdateDisplay();
         }
 
@@ -302,7 +384,8 @@ namespace CharacterManager.UI
                 (MutedColor, agg.CustomAbandoned),
             };
             var bar = UiTheme.MakeBarTrack(18f, segs, 0f);
-            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(agg.CustomWins, agg.CustomTotal - agg.CustomWins), BarValueWidth));
+            // Decisive win rate (abandons excluded), consistent with the Win Rate windows section.
+            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(agg.CustomWins, agg.CustomDeaths), BarValueWidth));
 
             body.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 4f), MouseFilter = MouseFilterEnum.Ignore });
 
@@ -316,7 +399,7 @@ namespace CharacterManager.UI
             AddStatsGrid(body, rows, 2);
 
             body.AddChild(UiTheme.MakeLabel(
-                "These runs are not counted by the game's official stats.",
+                "Win rate excludes abandons. These runs are not counted by the game's official stats.",
                 MutedColor, UiTheme.SmallFontSize));
 
             _contentContainer!.AddChild(panel);
@@ -369,6 +452,51 @@ namespace CharacterManager.UI
                 grid.AddChild(cell);
             }
             body.AddChild(grid);
+        }
+
+        /// <summary>Win rate over recent windows (last 10 / 50 / 100 / all decisive runs). M8.</summary>
+        private void AddWinRateWindows(CharacterAnalytics agg)
+        {
+            var panel = MakeSectionPanel("Win Rate  (recent windows)", out var body);
+            foreach (int n in new[] { 10, 50, 100, 0 })
+            {
+                var (wins, decisive, rate) = agg.WinRateWindow(n);
+                string label = n <= 0 ? "All runs" : $"Last {n}";
+
+                if (decisive <= 0)
+                {
+                    var empty = UiTheme.MakeBarTrack(16f, Array.Empty<(Color, float)>(), 1f);
+                    body.AddChild(UiTheme.MakeBarRow(label, BarLabelWidth, empty, "—", BarValueWidth));
+                    continue;
+                }
+
+                var segs = new (Color, float)[] { (UiTheme.Good, (float)rate) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0f, 100f - (float)rate));
+                body.AddChild(UiTheme.MakeBarRow(label, BarLabelWidth, bar, $"{rate:0.#}% ({wins}/{decisive})", BarValueWidth));
+            }
+            body.AddChild(UiTheme.MakeLabel(
+                "Win rate over the most recent decisive runs (abandons excluded).",
+                MutedColor, UiTheme.SmallFontSize));
+            _contentContainer!.AddChild(panel);
+        }
+
+        private void AddFloorBars(CharacterAnalytics agg, string label)
+        {
+            if (agg.FloorReached.Count == 0) return;
+            var panel = MakeSectionPanel($"Floors Reached Distribution  ({label})", out var body);
+            var keys = new List<int>(agg.FloorReached.Keys);
+            keys.Sort();
+            int maxCount = 1;
+            foreach (var f in keys) maxCount = Math.Max(maxCount, agg.FloorReached[f]);
+            foreach (var f in keys)
+            {
+                int count = agg.FloorReached[f];
+                var segs = new (Color, float)[] { (UiTheme.Heading, count) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxCount - count));
+                body.AddChild(UiTheme.MakeBarRow($"{f} floor{(f == 1 ? "" : "s")}", BarLabelWidth, bar,
+                    $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
+            }
+            _contentContainer!.AddChild(panel);
         }
 
         private void AddAscensionBars(CharacterAnalytics agg, string label)

@@ -109,6 +109,31 @@ The Character Management Mod extends the existing **CustomCharacterStats** mod i
 
 **Verification:** Build clean, `check_mod_compatibility` 0 issues. **Verified in-game:** random draw respects the configured pool; in-select-hidden characters are absent from the strip, the pool panel, and the random draw (including the all-unchecked fallback)
 
+**M8 — Analytics foundations + quick wins — IN PROGRESS (beta, built + installed, manual test pending)**
+
+First milestone of the analytics expansion (`ANALYTICS_PLAN.md`). Ships the cross-cutting infrastructure the richer per-card / per-encounter milestones (M9–M12) depend on, plus three visible wins on the existing per-character analytics page. Still read-only over saves.
+
+**Infrastructure (plan §4):**
+- **Async/cached deep-parse scaffold (4a) — `Code/Analytics/AnalyticsCache.cs`:** process-wide cache of per-character `CharacterAnalytics`, so re-opening a character or toggling filters across opens is instant instead of re-reading every `.run` file. Invalidation uses a cheap *generation token* (count of run-history files) rather than a Harmony save hook — finishing a run (count up) or pruning (count down) forces a recompute. Snapshots whose file list couldn't be read (`CharacterAnalytics.LoadFailed`, save system not ready) are never cached, so the screen can't get pinned to zeros at startup (plan §4a poison guard).
+  - **Threading decision:** the plan suggests `Task.Run`, but `SaveManager` is a Godot singleton with unverified off-thread safety. M8 reads only cheap top-level fields, so aggregation runs on the main thread and the screen stays responsive by painting `"Crunching run history…"` and deferring the parse one frame (`await ToSignal(GetTree(), ProcessFrame)`). Revisit true off-thread parsing (read raw bytes off-thread, deserialize there) in M9 if the floor-by-floor walks make it heavy.
+- **Name resolver (4b) — `Code/Analytics/NameResolver.cs`:** `ModelId` → localized display name via `LocString.Exists` table-probing (`cards`/`relics`/`potions`/`encounters`/`monsters`/`events`, `.title`/`.name`), memoised, with a SCREAMING_SNAKE→Title-Case fallback so unknown/modded ids degrade gracefully and never crash. Infra for the M9+ ranked lists (not yet surfaced in the UI).
+- **Ranked-list row widget (4c) — `UiTheme.MakeRankedRow`:** the shared "name — proportional bar — value" row behind future card/relic/encounter/death lists, built on the existing bar primitives. Sort + show-more container deferred to M9, where it can be exercised against real lists.
+
+**Quick wins (plan §5 M8):**
+- **Floor-reached distribution bars** — new `CharacterAnalytics.FloorReached` dict, rendered alongside the existing act-reached bars.
+- **Win-rate moving windows** — last 10 / 50 / 100 / all decisive runs (abandons excluded), via `CharacterAnalytics.WinRateWindow(n)`; shown as its own bar section. Computed over the mode+ascension scope but independent of the recent-N cap.
+- **Expanded filter bar** — alongside All/Standard/Custom/Daily, two cycle buttons add a **minimum-ascension** floor (Any/1/5/10/15/20+) and a **recent-N window** (All/10/50/100). Driven by a new composite `RunFilter` (mode + min-ascension + recent-N); `GetFiltered(RunFilter)` re-derives every distribution and carries the surviving runs through so windows/floor bars/exports all work off the filtered aggregate.
+
+**Build fix:** freshly-cloned `references/` stats-mod clones (gitignored, studied for the plan) were being swept into compilation by the SDK's `**/*.cs` glob and collided. Added `<Compile Remove="references/**/*.cs" />` (+ EmbeddedResource/None) to `CharacterManager.csproj`.
+
+**Files:** `Code/Analytics/AnalyticsCache.cs` (new), `Code/Analytics/NameResolver.cs` (new), `Code/Analytics/CharacterAnalytics.cs` (RunFilter, FloorReached, LoadFailed, WinRateWindow, richer GetFiltered), `Code/UI/UiTheme.cs` (MakeRankedRow), `Code/UI/CharacterAnalyticsScreen.cs` (async cached populate, win-rate-windows + floor-bars sections, expanded filter bar), `CharacterManager.csproj` (exclude references/).
+
+**Post-test fixes (verified in-game on Ironclad, 32 runs):**
+- **Acts-reached correctness:** "Act Reached Distribution" / "Highest act reached" used `RunHistory.Acts.Count`, which is the run's *planned* act list (confirmed via `RunHistoryUtilities.CreateRunHistoryEntry`: `Acts = run.Acts.Select(...)`) — always ~3-4 regardless of progress, so a floor-1 death wrongly read as "reached act 3". Switched to `MapPointHistory.Count` (outer list = acts actually entered; inner = floors), the same source as floors-reached. Also corrects the JSON/CSV export (shared `Compute`).
+- **M4 / M8 consistency:** the Custom/Daily section's win rate counted abandons as losses (`wins/total`); aligned it to the decisive rate (`wins/(wins+deaths)`) used by the Win Rate windows, with an "excludes abandons" note.
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing nullable warnings), `validate_mod` valid. **Verified in-game:** win-rate windows, Asc/Recent filters, and floor-reached bars render correctly; act distribution now reflects real progression.
+
 ## Release History
 
 ### v0.3.1 (2026-06-18) — Game v0.107.1 compatibility
