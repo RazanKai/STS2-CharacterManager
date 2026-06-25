@@ -134,6 +134,7 @@ namespace CharacterManager.Analytics
     /// <summary>One run's worth of fields, extracted from a <see cref="RunHistory"/> file.</summary>
     public sealed class RunSummary
     {
+        public string HistoryName = "";  // run-history file name, for reloading the full run (M12 autopsy)
         public string Seed = "";
         public long StartTime;       // unix seconds
         public bool Win;
@@ -263,6 +264,7 @@ namespace CharacterManager.Analytics
                     int floors = 0;
                     var summary = new RunSummary
                     {
+                        HistoryName = name,
                         Seed = h.Seed ?? "",
                         StartTime = h.StartTime,
                         Win = h.Win,

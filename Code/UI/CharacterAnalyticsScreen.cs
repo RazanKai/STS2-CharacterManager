@@ -126,6 +126,15 @@ namespace CharacterManager.UI
             exportBtn.Pressed += OnExport;
             AddChild(exportBtn);
 
+            // Run Autopsy button (M12) — left of Export.
+            var autopsyBtn = UiTheme.MakeButton("Run Autopsy", null, 130f);
+            autopsyBtn.TooltipText = "Drill into a single run, floor by floor";
+            UiTheme.PlaceColumnRight(autopsyBtn, PaddingTop, HeaderHeight, 130f);
+            autopsyBtn.OffsetRight -= 246f; // left of Back (120+8) + Export (110+8)
+            autopsyBtn.OffsetLeft -= 246f;
+            autopsyBtn.Pressed += OpenAutopsy;
+            AddChild(autopsyBtn);
+
             // Status line under the header (shows the export destination after a click).
             _statusLabel = UiTheme.MakeLabel("", SectionColor, UiTheme.SmallFontSize);
             _statusLabel.ClipText = true;
@@ -867,6 +876,36 @@ namespace CharacterManager.UI
                 body.AddChild(UiTheme.MakeBarRow($"Reached act {act}", BarLabelWidth, bar, $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
             }
             _contentContainer!.AddChild(panel);
+        }
+
+        // ─── Run autopsy (M12) ───────────────────────────────────────────────
+
+        private CharacterRunAutopsyScreen? _autopsyScreen;
+
+        private void OpenAutopsy()
+        {
+            if (_stack == null || _character == null) return;
+            if (_fullAgg == null || _fullAgg.Runs.Count == 0)
+            {
+                if (_statusLabel != null)
+                {
+                    _statusLabel.AddThemeColorOverride("font_color", MutedColor);
+                    _statusLabel.Text = "No runs recorded to inspect.";
+                }
+                return;
+            }
+
+            // Newest first; the autopsy opens on the most recent run.
+            var runs = new List<RunSummary>(_fullAgg.Runs);
+            runs.Sort((a, b) => b.StartTime.CompareTo(a.StartTime));
+
+            if (_autopsyScreen == null || !GodotObject.IsInstanceValid(_autopsyScreen))
+            {
+                _autopsyScreen = new CharacterRunAutopsyScreen { Visible = false };
+                _stack.AddChild(_autopsyScreen);
+            }
+            _autopsyScreen.SetRuns(_character, runs, 0);
+            _stack.Push(_autopsyScreen);
         }
 
         // ─── Export (M5) ─────────────────────────────────────────────────────

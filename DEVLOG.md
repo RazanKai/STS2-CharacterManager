@@ -193,6 +193,23 @@ Pick / win-rate lists for relics, potions, and ancient (Neow/elder) choices — 
 
 **Files:** `Code/Analytics/CharacterAnalytics.cs` (PickStat/AncientRec, RunSummary inventory fields, ExtractInventoryFacts, ComputeOwnedChoiceStats + Relic/Potion/Ancient stats), `Code/UI/CharacterAnalyticsScreen.cs` (inventory sections + AddPickListSection).
 
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** relic/potion/ancient pick & win-rate lists render correctly.
+
+**M12 — Single-run "autopsy" — IN PROGRESS (beta, built + installed, manual test pending)**
+
+A per-run drill-in (different shape from M8–M11's cross-run aggregation): it loads one `.run` file directly and renders it floor by floor.
+
+**Screen (`Code/UI/CharacterRunAutopsyScreen.cs`, new `NSubmenu`):**
+- Opened from a new **Run Autopsy** button on the analytics header; starts on the most recent run. **◀ Older / Newer ▶** walk the character's runs (the newest-first list is handed over from the analytics screen's already-loaded aggregate — no extra disk scan; only the selected run's file is loaded).
+- **Summary** (result, ascension, run time, acts, floors, killed-by, mode, seed).
+- **HP Over Time** — the one bespoke chart: an `HpTimeline : Control` with a custom `_Draw` polyline (per-floor current HP in green, max HP faint), redrawn on resize, guarded for sparse data. This is the M12 stretch piece the plan flagged; no reference mod attempted it in-engine.
+- **Ancients Taken**, **Boss Fights** (damage bars), and a per-act **floor event log** (room name colour-coded by type, a compact "−HP · +gold · took/removed/upgraded cards · relics · potions" summary, and HP at each floor).
+- Reuses `NameResolver` for ids and the `UiTheme` section/bar primitives; player matched by `RunHistoryPlayer.Id` with single-player fallback. `RunSummary.HistoryName` added so a run can be reloaded.
+
+**Scope:** event log is read-only and textual (per plan); the HP line is the only custom-drawn element. Selecting an arbitrary run is via Prev/Next rather than a full picker list (sufficient; a searchable picker can come later).
+
+**Files:** `Code/UI/CharacterRunAutopsyScreen.cs` (new), `Code/UI/CharacterAnalyticsScreen.cs` (Run Autopsy button + OpenAutopsy), `Code/Analytics/CharacterAnalytics.cs` (RunSummary.HistoryName).
+
 **Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending.**
 
 ## Release History
