@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Runs.History;
 using MegaCrit.Sts2.Core.Saves;
 
 namespace CharacterManager.Analytics
@@ -23,6 +25,64 @@ namespace CharacterManager.Analytics
         public readonly ModelId Id;
         public readonly int Upgrade;
         public CardRef(ModelId id, int upgrade) { Id = id; Upgrade = upgrade; }
+    }
+
+    /// <summary>One combat fought in a run: encounter id, tier, floor damage taken, turns (M10).</summary>
+    public readonly struct CombatRec
+    {
+        public readonly ModelId Id;
+        public readonly RoomType Tier;   // Monster / Elite / Boss
+        public readonly int Damage;      // player's DamageTaken on that floor
+        public readonly int Turns;
+        public CombatRec(ModelId id, RoomType tier, int damage, int turns)
+        {
+            Id = id; Tier = tier; Damage = damage; Turns = turns;
+        }
+    }
+
+    /// <summary>How a run ended (M10, caveat 4). None = the run was a win.</summary>
+    public enum DeathSource { None, Combat, Event, Abandoned, Unknown }
+
+    /// <summary>Death attribution for one run (M10).</summary>
+    public struct DeathInfo
+    {
+        public DeathSource Source;
+        public ModelId Id;     // encounter/event id when Source is Combat/Event
+        public int Act;        // act reached when the run ended
+    }
+
+    /// <summary>Aggregated combat stats for one encounter across a run set (M10).</summary>
+    public sealed class EncounterStat
+    {
+        public string Name = "";
+        public ModelId Id = ModelId.none;
+        public RoomType Tier;
+        public int Fights;
+        public int Deaths;
+        public long SumDamage;
+        public readonly List<int> Damages = new();   // for percentiles
+
+        public double DeathRatePct => Fights > 0 ? 100.0 * Deaths / Fights : -1.0;
+        public double AvgDamage => Fights > 0 ? (double)SumDamage / Fights : 0.0;
+    }
+
+    /// <summary>Aggregated combat totals for one tier (Monster/Elite/Boss) across a run set (M10).</summary>
+    public sealed class TierStat
+    {
+        public RoomType Tier;
+        public int Fights;
+        public int Deaths;
+        public long SumDamage;
+        public double DeathRatePct => Fights > 0 ? 100.0 * Deaths / Fights : -1.0;
+        public double AvgDamage => Fights > 0 ? (double)SumDamage / Fights : 0.0;
+    }
+
+    /// <summary>A single death-cause tally across a run set (M10).</summary>
+    public sealed class DeathCauseStat
+    {
+        public string Name = "";
+        public DeathSource Source;
+        public int Count;
     }
 
     /// <summary>Aggregated stats for one card (or upgraded variant) across a run set (M9).</summary>
@@ -69,6 +129,12 @@ namespace CharacterManager.Analytics
         public List<CardRef> RemovedCards = new();
         /// <summary>Card ids upgraded this run (per-occurrence).</summary>
         public List<ModelId> UpgradedCardIds = new();
+
+        // ─── Per-run combat facts (M10) ──────────────────────────────────────
+        /// <summary>Every combat fought this run, in floor order (deepest is last).</summary>
+        public List<CombatRec> Combats = new();
+        /// <summary>How this run ended (death attribution, caveat 4).</summary>
+        public DeathInfo Death;
     }
 
     /// <summary>
@@ -174,7 +240,10 @@ namespace CharacterManager.Analytics
                             if (rooms == null) continue;
                             floors += rooms.Count;
                             foreach (var entry in rooms)
+                            {
                                 ExtractCardFacts(entry, me.Id, summary);
+                                ExtractCombatFacts(entry, me.Id, summary);
+                            }
                         }
 
                     // Final deck snapshot completes the "runs with" union (caveat 1: starter cards and
@@ -182,6 +251,8 @@ namespace CharacterManager.Analytics
                     if (me.Deck != null)
                         foreach (var c in me.Deck)
                             if (c?.Id != null) summary.DeckCards.Add(new CardRef(c.Id, c.CurrentUpgradeLevel));
+
+                    summary.Death = ResolveDeath(h, summary);
 
                     a.Total++;
                     if (h.Win) a.Wins++;
@@ -412,6 +483,158 @@ namespace CharacterManager.Analytics
             }
 
             return new List<CardStat>(map.Values);
+        }
+
+        /// <summary>Records this character's combat (if any) at one floor into <paramref name="summary"/> (M10).</summary>
+        private static void ExtractCombatFacts(MapPointHistoryEntry? entry, ulong playerId, RunSummary summary)
+        {
+            var roomsList = entry?.Rooms;
+            if (roomsList == null || roomsList.Count == 0) return;
+
+            MapPointRoomHistoryEntry? combat = null;
+            foreach (var r in roomsList)
+                if (r != null && r.RoomType.IsCombatRoom()) { combat = r; break; }
+            if (combat == null) return;
+
+            int dmg = 0;
+            var stats = entry!.PlayerStats;
+            if (stats != null)
+            {
+                PlayerMapPointHistoryEntry? pe = null;
+                foreach (var ps in stats)
+                    if (ps.PlayerId == playerId) { pe = ps; break; }
+                if (pe == null && stats.Count == 1) pe = stats[0];
+                if (pe != null) dmg = pe.DamageTaken;
+            }
+
+            summary.Combats.Add(new CombatRec(combat.ModelId ?? ModelId.none, combat.RoomType, dmg, combat.TurnsTaken));
+        }
+
+        /// <summary>
+        /// Attributes how a run ended (M10, caveat 4). Order: win → abandoned → killed-by-encounter →
+        /// killed-by-event → deepest combat fought → unknown. Abandoned is checked early because the
+        /// flag is authoritative and shouldn't be mis-attributed to the last fight.
+        /// </summary>
+        private static DeathInfo ResolveDeath(RunHistory h, RunSummary summary)
+        {
+            var d = new DeathInfo { Source = DeathSource.None, Id = ModelId.none, Act = summary.ActsReached };
+            if (h.Win) return d;
+            if (h.WasAbandoned) { d.Source = DeathSource.Abandoned; return d; }
+
+            if (h.KilledByEncounter != null && h.KilledByEncounter != ModelId.none)
+            { d.Source = DeathSource.Combat; d.Id = h.KilledByEncounter; return d; }
+
+            if (h.KilledByEvent != null && h.KilledByEvent != ModelId.none)
+            { d.Source = DeathSource.Event; d.Id = h.KilledByEvent; return d; }
+
+            if (summary.Combats.Count > 0)
+            { d.Source = DeathSource.Combat; d.Id = summary.Combats[summary.Combats.Count - 1].Id; return d; }
+
+            d.Source = DeathSource.Unknown;
+            return d;
+        }
+
+        /// <summary>Per-encounter combat aggregation over the filtered run list (M10).</summary>
+        public List<EncounterStat> ComputeEncounterStats()
+        {
+            var map = new Dictionary<string, EncounterStat>();
+
+            EncounterStat GetStat(ModelId id, RoomType tier)
+            {
+                var mid = id ?? ModelId.none;
+                string key = mid.Entry;
+                if (!map.TryGetValue(key, out var st))
+                {
+                    st = new EncounterStat { Id = mid, Tier = tier, Name = NameResolver.Resolve(mid) };
+                    map[key] = st;
+                }
+                return st;
+            }
+
+            foreach (var run in Runs)
+            {
+                foreach (var c in run.Combats)
+                {
+                    var st = GetStat(c.Id, c.Tier);
+                    st.Fights++;
+                    st.SumDamage += c.Damage;
+                    st.Damages.Add(c.Damage);
+                }
+
+                if (run.Death.Source == DeathSource.Combat && run.Death.Id != ModelId.none)
+                {
+                    RoomType tier = TierOfDeath(run);
+                    GetStat(run.Death.Id, tier).Deaths++;
+                }
+            }
+            return new List<EncounterStat>(map.Values);
+        }
+
+        /// <summary>Combat totals grouped by tier (Monster/Elite/Boss) over the filtered run list (M10).</summary>
+        public List<TierStat> ComputeTierStats()
+        {
+            var map = new Dictionary<RoomType, TierStat>();
+            TierStat Get(RoomType t)
+            {
+                if (!map.TryGetValue(t, out var s)) { s = new TierStat { Tier = t }; map[t] = s; }
+                return s;
+            }
+
+            foreach (var run in Runs)
+            {
+                foreach (var c in run.Combats)
+                {
+                    var s = Get(c.Tier);
+                    s.Fights++;
+                    s.SumDamage += c.Damage;
+                }
+                if (run.Death.Source == DeathSource.Combat && run.Death.Id != ModelId.none && run.Combats.Count > 0)
+                    Get(TierOfDeath(run)).Deaths++;
+            }
+            return new List<TierStat>(map.Values);
+        }
+
+        /// <summary>Death-cause tallies over the filtered run list (M10).</summary>
+        public List<DeathCauseStat> ComputeDeathCauses()
+        {
+            var map = new Dictionary<string, DeathCauseStat>();
+            foreach (var run in Runs)
+            {
+                var d = run.Death;
+                if (d.Source == DeathSource.None) continue;
+
+                string name = d.Source switch
+                {
+                    DeathSource.Combat => NameResolver.Resolve(d.Id),
+                    DeathSource.Event => NameResolver.Resolve(d.Id),
+                    DeathSource.Abandoned => "Abandoned",
+                    _ => "Unknown",
+                };
+                string key = d.Source + "|" + name;
+                if (!map.TryGetValue(key, out var s)) { s = new DeathCauseStat { Name = name, Source = d.Source }; map[key] = s; }
+                s.Count++;
+            }
+            return new List<DeathCauseStat>(map.Values);
+        }
+
+        /// <summary>Tier of a run's death encounter, looked up from the combats it fought (default Monster).</summary>
+        private static RoomType TierOfDeath(RunSummary run)
+        {
+            for (int i = run.Combats.Count - 1; i >= 0; i--)
+                if (run.Combats[i].Id == run.Death.Id) return run.Combats[i].Tier;
+            return RoomType.Monster;
+        }
+
+        /// <summary>Nearest-rank percentile of an int sample (0 if empty). Copies + sorts; caller-sized lists are small.</summary>
+        public static int Percentile(List<int> values, double p)
+        {
+            if (values == null || values.Count == 0) return 0;
+            var arr = new List<int>(values);
+            arr.Sort();
+            int idx = (int)Math.Ceiling(p / 100.0 * arr.Count) - 1;
+            if (idx < 0) idx = 0;
+            if (idx >= arr.Count) idx = arr.Count - 1;
+            return arr[idx];
         }
 
         private static bool ModeMatchesFilter(GameMode mode, GameModeFilter filter)

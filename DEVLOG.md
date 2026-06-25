@@ -151,6 +151,28 @@ The biggest analytics upgrade: per-card pick / win-rate / avoidance lists, all f
 
 **Files:** `Code/Analytics/CharacterAnalytics.cs` (CardChoiceRec/CardRef/CardStat, RunSummary card fields, ExtractCardFacts, ComputeCardStats), `Code/UI/CharacterAnalyticsScreen.cs` (card sections + upgrade toggle).
 
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** four card lists render correctly; starter/basic cards correctly trend to/below baseline win rate (winning decks thin them out) — expected, not a bug.
+
+**M10 — Encounter & death analytics — IN PROGRESS (beta, built + installed, manual test pending)**
+
+Combat-side analytics from the same cached per-run walk. Tier comes from `RoomType` (Monster/Elite/Boss) directly — cleaner and less fragile than parsing the `ModelId` suffix (caveat 5 satisfied without string-munging).
+
+**Deep parse (`CharacterAnalytics`):**
+- `ExtractCombatFacts` records each combat per floor: encounter `ModelId`, tier (`RoomType` via `IsCombatRoom`), the player's floor `DamageTaken`, and `TurnsTaken`, into `RunSummary.Combats` (floor order; deepest last).
+- `ResolveDeath` computes `DeathInfo` per the caveat-4 chain: win→None; `WasAbandoned`→Abandoned (authoritative, checked first); `KilledByEncounter`→Combat; `KilledByEvent`→Event; deepest combat fought→Combat; else Unknown.
+- Aggregations over the filtered run list: `ComputeEncounterStats` (per-encounter Fights/Deaths/Σ+samples damage/tier), `ComputeTierStats` (Normal/Elite/Boss totals), `ComputeDeathCauses` (counts by resolved cause), plus a nearest-rank `Percentile` helper.
+
+**UI (`CharacterAnalyticsScreen`):**
+- **Combat by Tier** table (Fights / Deaths / Death % / Avg dmg for Normal/Elite/Boss).
+- **Deadliest Encounters** (death rate, min 3 fights — caveat 6).
+- **Most Damaging Encounters** (avg damage + p80, min 3 fights).
+- **Death Causes** (count + %, colour-coded combat/event/abandoned, "(event)" tag).
+- All respect the active filters; empty-state note for runs predating per-floor combat history.
+
+**Scope:** death-causes are flat (the `DeathInfo.Act` is captured for a future per-act split); avg-turns captured but not yet surfaced. Caveats 2/7/8 (shop buys, ancients, Elo) remain later milestones.
+
+**Files:** `Code/Analytics/CharacterAnalytics.cs` (CombatRec/DeathSource/DeathInfo/EncounterStat/TierStat/DeathCauseStat, RunSummary combat fields, ExtractCombatFacts, ResolveDeath, Compute{Encounter,Tier,DeathCause}Stats, Percentile), `Code/UI/CharacterAnalyticsScreen.cs` (combat sections).
+
 **Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending.**
 
 ## Release History

@@ -5,6 +5,7 @@ using Godot;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Saves;
 
 namespace CharacterManager.UI
@@ -57,6 +58,7 @@ namespace CharacterManager.UI
         // M9 ranked-list sizing.
         private const int CardListLimit = 10;     // rows shown per card list
         private const int CardMinSample = 3;      // min offers/runs before a rate is trusted (caveat 6)
+        private const int CombatMinSample = 3;    // min fights before an encounter rate is trusted (caveat 6)
 
         protected override Control? InitialFocusedControl => null;
 
@@ -285,6 +287,7 @@ namespace CharacterManager.UI
 
                 AddRunDetailsSection(agg, suffix);
                 AddCardSections(agg);
+                AddCombatSections(agg);
                 AddAscensionBars(agg, suffix);
                 AddActBars(agg, suffix);
                 AddFloorBars(agg, suffix);
@@ -596,6 +599,143 @@ namespace CharacterManager.UI
             }
             _contentContainer!.AddChild(panel);
         }
+
+        // ─── Encounter & death analytics (M10) ───────────────────────────────
+
+        private void AddCombatSections(CharacterAnalytics agg)
+        {
+            var tiers = agg.ComputeTierStats();
+            bool anyCombat = false;
+            foreach (var t in tiers) if (t.Fights > 0) { anyCombat = true; break; }
+            if (!anyCombat)
+            {
+                AddTextSection("Combat",
+                    "No combat data recorded for these runs yet. Encounter / death stats come from per-floor combat history, which runs from older builds may not include.");
+                return;
+            }
+
+            AddTierTable(tiers);
+
+            var encounters = agg.ComputeEncounterStats();
+
+            // Deadliest encounters — death rate, min fights (caveat 6).
+            var deadliest = new List<EncounterStat>(encounters);
+            deadliest.RemoveAll(e => e.Fights < CombatMinSample || e.Deaths <= 0);
+            deadliest.Sort((a, b) =>
+            {
+                int c = b.DeathRatePct.CompareTo(a.DeathRatePct);
+                return c != 0 ? c : b.Deaths.CompareTo(a.Deaths);
+            });
+            AddEncounterListSection($"Deadliest Encounters  (≥{CombatMinSample} fights)", deadliest,
+                e => $"{e.DeathRatePct:0.#}% ({e.Deaths}/{e.Fights})",
+                e => (float)Math.Max(0, e.DeathRatePct), UiTheme.Bad, 100f);
+
+            // Most damaging encounters — average damage taken + p80, min fights.
+            var damaging = new List<EncounterStat>(encounters);
+            damaging.RemoveAll(e => e.Fights < CombatMinSample);
+            damaging.Sort((a, b) => b.AvgDamage.CompareTo(a.AvgDamage));
+            AddEncounterListSection($"Most Damaging Encounters  (≥{CombatMinSample} fights)", damaging,
+                e => $"avg {e.AvgDamage:0}  ·  p80 {CharacterAnalytics.Percentile(e.Damages, 80)}",
+                e => (float)e.AvgDamage, UiTheme.Heading, 0f);
+
+            AddDeathCausesSection(agg.ComputeDeathCauses());
+        }
+
+        /// <summary>Compact Tier / Fights / Deaths / Death% / Avg-dmg table (M10).</summary>
+        private void AddTierTable(List<TierStat> tiers)
+        {
+            var panel = MakeSectionPanel("Combat by Tier", out var body);
+
+            var grid = new GridContainer { Columns = 5, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            grid.AddThemeConstantOverride("h_separation", 24);
+            grid.AddThemeConstantOverride("v_separation", 4);
+
+            void Cell(string text, Color color, HorizontalAlignment align = HorizontalAlignment.Left)
+            {
+                var l = UiTheme.MakeLabel(text, color, UiTheme.BodyFontSize, align);
+                l.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+                grid.AddChild(l);
+            }
+
+            Cell("Tier", MutedColor); Cell("Fights", MutedColor, HorizontalAlignment.Right);
+            Cell("Deaths", MutedColor, HorizontalAlignment.Right); Cell("Death %", MutedColor, HorizontalAlignment.Right);
+            Cell("Avg dmg", MutedColor, HorizontalAlignment.Right);
+
+            foreach (var tier in new[] { RoomType.Monster, RoomType.Elite, RoomType.Boss })
+            {
+                TierStat? s = null;
+                foreach (var t in tiers) if (t.Tier == tier) { s = t; break; }
+                if (s == null || s.Fights == 0) continue;
+
+                Cell(TierName(tier), BodyColor);
+                Cell(s.Fights.ToString(), BodyColor, HorizontalAlignment.Right);
+                Cell(s.Deaths.ToString(), BodyColor, HorizontalAlignment.Right);
+                Cell(s.DeathRatePct >= 0 ? $"{s.DeathRatePct:0.#}%" : "—", BodyColor, HorizontalAlignment.Right);
+                Cell($"{s.AvgDamage:0}", BodyColor, HorizontalAlignment.Right);
+            }
+
+            body.AddChild(grid);
+            _contentContainer!.AddChild(panel);
+        }
+
+        private void AddDeathCausesSection(List<DeathCauseStat> causes)
+        {
+            int total = 0;
+            foreach (var d in causes) total += d.Count;
+            if (total <= 0) return;
+
+            causes.Sort((a, b) => b.Count.CompareTo(a.Count));
+            int shown = Math.Min(CardListLimit, causes.Count);
+            string heading = causes.Count > shown ? $"Death Causes  (top {shown} of {causes.Count})" : "Death Causes";
+            var panel = MakeSectionPanel(heading, out var body);
+
+            int max = 1;
+            for (int i = 0; i < shown; i++) max = Math.Max(max, causes[i].Count);
+
+            for (int i = 0; i < shown; i++)
+            {
+                var d = causes[i];
+                double pct = 100.0 * d.Count / total;
+                Color col = d.Source switch
+                {
+                    DeathSource.Combat => UiTheme.Bad,
+                    DeathSource.Event => UiTheme.Heading,
+                    _ => UiTheme.Muted,
+                };
+                string label = d.Source == DeathSource.Event ? d.Name + "  (event)" : d.Name;
+                body.AddChild(UiTheme.MakeRankedRow(label, $"{d.Count} ({pct:0.#}%)", d.Count, max, col));
+            }
+            _contentContainer!.AddChild(panel);
+        }
+
+        /// <summary>One capped, bar-ranked encounter list (mirrors <see cref="AddCardListSection"/>).</summary>
+        private void AddEncounterListSection(string heading, List<EncounterStat> list,
+            Func<EncounterStat, string> value, Func<EncounterStat, float> weight, Color color, float maxWeight = 0f)
+        {
+            if (list.Count == 0) return;
+
+            int shown = Math.Min(CardListLimit, list.Count);
+            string h = list.Count > shown ? $"{heading}  (top {shown} of {list.Count})" : heading;
+            var panel = MakeSectionPanel(h, out var body);
+
+            float max = maxWeight;
+            if (max <= 0f) { max = 1f; for (int i = 0; i < shown; i++) max = Math.Max(max, weight(list[i])); }
+
+            for (int i = 0; i < shown; i++)
+            {
+                var s = list[i];
+                body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
+            }
+            _contentContainer!.AddChild(panel);
+        }
+
+        private static string TierName(RoomType tier) => tier switch
+        {
+            RoomType.Monster => "Normal",
+            RoomType.Elite => "Elite",
+            RoomType.Boss => "Boss",
+            _ => tier.ToString(),
+        };
 
         private void AddAscensionBars(CharacterAnalytics agg, string label)
         {
