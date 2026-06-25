@@ -210,7 +210,22 @@ A per-run drill-in (different shape from M8–M11's cross-run aggregation): it l
 
 **Files:** `Code/UI/CharacterRunAutopsyScreen.cs` (new), `Code/UI/CharacterAnalyticsScreen.cs` (Run Autopsy button + OpenAutopsy), `Code/Analytics/CharacterAnalytics.cs` (RunSummary.HistoryName).
 
-**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending.**
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** autopsy summary / ancients / boss damage / floor log render; HP chart rebuilt as a container+ColorRect gradient column chart (custom `_Draw`/`_Process`/`Line2D` would not render in this load path — see CLAUDE.md gotcha).
+
+**M13 (optional/advanced) — IN PROGRESS — exporter extension done (beta, built + installed)**
+
+First slice of M13: the M5 JSON/CSV exporter now includes every M8–M12 aggregate.
+
+**`StatsExporter`:**
+- **JSON** gains `cards`, `encounters`, `combatTiers`, `deathCauses`, `relics`, `potions`, `ancients`, plus `floorReachedDistribution` and `winRateWindows` under `runHistoryAggregate`. Rates serialise as null when there were no samples.
+- **CSV**: alongside the existing per-run `{stem}.csv`, writes per-aggregate files `{stem}_cards.csv`, `_encounters.csv`, `_relics.csv`, `_potions.csv`, `_ancients.csv`, `_deaths.csv` (each only when it has rows). `ExportResult.Files` lists everything written; the screen's status line now reports the file count.
+- All aggregates come from the same `CharacterAnalytics` methods the screen uses, over the full unfiltered run set; cards are exported base-collapsed (upgradeAware=false).
+
+**Still open in M13:** card & ancient Elo (opt-in, relic-dependent grouping — caveat 8); filter-by-individual-card/ancient-pick; surfacing `progress.save` progression (unlocks/achievements). All independent follow-ups.
+
+**Files:** `Code/Analytics/StatsExporter.cs` (JSON sections + per-aggregate CSV writers), `Code/UI/CharacterAnalyticsScreen.cs` (export status message).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending** (export writes files; non-visual).
 
 ## Release History
 

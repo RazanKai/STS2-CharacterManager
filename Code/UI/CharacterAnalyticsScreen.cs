@@ -918,7 +918,7 @@ namespace CharacterManager.UI
             if (result.Ok)
             {
                 _statusLabel.AddThemeColorOverride("font_color", SectionColor);
-                _statusLabel.Text = "Exported JSON + CSV to:  " + result.Directory;
+                _statusLabel.Text = $"Exported {result.Files.Count} files (JSON + CSVs) to:  " + result.Directory;
             }
             else
             {
