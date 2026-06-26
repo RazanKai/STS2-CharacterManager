@@ -321,6 +321,22 @@ First public release of the M7 random-character pool, with multiplayer support a
 
 **Distribution:** Released to all 3 channels — GitHub `v0.5.0` (merged `beta` → `main`), Nexus via CI auto-fire, Steam Workshop item `3747550119` (updated content, square thumbnail, tags `QoL` / `Tools & APIs` / `Utility` / `English`)
 
+### v0.6.0 (2026-06-26) — Analytics deep-dive + single-run autopsy + UI polish
+
+Ships the entire analytics suite built on `beta` since v0.5.0 (M8–M13) plus the M14 presentation pass — the largest content jump since v0.1.0.
+
+**Per-character analytics (M8–M11):** win-rate windows (last 10/50/100/all decisive runs); card pick & win-rate lists (Most Picked, Highest/Lowest Win Rate, Most Avoided) with an Upgrades On/Off toggle; relic, potion, and ancient (Neow/elder) pick & win-rate lists; encounter analytics (Deadliest, Most Damaging), Combat-by-Tier table, and Death Causes; act/floor distributions. Composite filtering by game-mode + minimum ascension + recent-N window.
+
+**Single-run autopsy (M12):** a per-run drill-in opened from the analytics header — run summary, HP-over-time column chart, ancients taken, boss-fight damage, and a per-act floor event log; ◀ Older / Newer ▶ walk the character's runs.
+
+**Export (M13):** the JSON/CSV export now includes every aggregate (cards, encounters, combat tiers, death causes, relics, potions, ancients, floor distribution, win-rate windows) with per-aggregate CSV files.
+
+**UI polish (M14):** Summary card now hides on Custom/Daily (it's official Standard-only data); bar fills follow their rounded pill groove; ranked rows align on a fixed name column + expand-fill bar + fixed value column; sections lay out in two balanced columns for density.
+
+**Scope:** card/ancient Elo and filter-by-individual-pick remain open follow-ups (tracked under M13). `min_game_version` unchanged at `0.107.1`.
+
+**Distribution:** GitHub `v0.6.0` (merged `beta` → `main`), Nexus via CI auto-fire, Steam Workshop item `3747550119`.
+
 ## M1 — Character Manager submenu (anchor)
 
 **Core Implementation:**
