@@ -90,6 +90,7 @@ namespace CharacterManager.UI
             AddColLabel(colHbox, "Character", SizeFlags.ExpandFill);
             AddColLabel(colHbox, "Stats", SizeFlags.ShrinkCenter, ColWidth);
             AddColLabel(colHbox, "In Select", SizeFlags.ShrinkCenter, ColWidth);
+            AddColLabel(colHbox, "Cross Source", SizeFlags.ShrinkCenter, ColWidth);
 
             // ── Left list: scrollable rows ──
             float scrollY = colY + ColRowHeight + 4f;
@@ -195,6 +196,13 @@ namespace CharacterManager.UI
                     v => EnabledStore.Toggle(character.Id)));
             else
                 hbox.AddChild(MakeFixedLabel("—", UiTheme.Muted, ColWidth));
+
+            // Cross-source toggle (custom only; base always eligible)
+            if (isCustom)
+                hbox.AddChild(MakeToggle(CrossSourceStore.IsEligible(character.Id),
+                    v => CrossSourceStore.Toggle(character.Id)));
+            else
+                hbox.AddChild(MakeFixedLabel("Always", UiTheme.Muted, ColWidth));
 
             _rows.Add(new RowVisual(character, panel, normal, selected));
             return panel;
