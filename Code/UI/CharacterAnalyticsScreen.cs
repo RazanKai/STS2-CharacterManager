@@ -5,6 +5,7 @@ using Godot;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Saves;
 
 namespace CharacterManager.UI
@@ -39,10 +40,30 @@ namespace CharacterManager.UI
         private Label? _subtitleLabel;
         private Label? _statusLabel;
         private VBoxContainer? _contentContainer;
+        // Two balanced columns the section panels are distributed across (rebuilt each refresh).
+        private VBoxContainer? _colLeft;
+        private VBoxContainer? _colRight;
+        private float _leftWeight;
+        private float _rightWeight;
 
-        private CharacterAnalytics? _fullAgg;         // loaded once per open
+        private CharacterAnalytics? _fullAgg;         // loaded once per open (via AnalyticsCache)
         private GameModeFilter _currentFilter = GameModeFilter.All;
         private readonly List<(GameModeFilter Mode, Button Btn)> _filterBtns = new();
+
+        // Composite filter axes (M8): minimum ascension + most-recent-N window, cycled by two buttons.
+        private static readonly int[] AscSteps = { 0, 1, 5, 10, 15, 20 };
+        private static readonly int[] RecentSteps = { 0, 10, 50, 100 };
+        private int _minAscension;   // 0 = any
+        private int _recentCount;    // 0 = all
+        private bool _cardUpgradeAware;  // M9: collapse Strike/Strike+ (false) or keep separate (true)
+        private Button? _ascBtn;
+        private Button? _recentBtn;
+        private Button? _upgradeBtn;
+
+        // M9 ranked-list sizing.
+        private const int CardListLimit = 10;     // rows shown per card list
+        private const int CardMinSample = 3;      // min offers/runs before a rate is trusted (caveat 6)
+        private const int CombatMinSample = 3;    // min fights before an encounter rate is trusted (caveat 6)
 
         protected override Control? InitialFocusedControl => null;
 
@@ -110,6 +131,15 @@ namespace CharacterManager.UI
             exportBtn.Pressed += OnExport;
             AddChild(exportBtn);
 
+            // Run Autopsy button (M12) — left of Export.
+            var autopsyBtn = UiTheme.MakeButton("Run Autopsy", null, 130f);
+            autopsyBtn.TooltipText = "Drill into a single run, floor by floor";
+            UiTheme.PlaceColumnRight(autopsyBtn, PaddingTop, HeaderHeight, 130f);
+            autopsyBtn.OffsetRight -= 246f; // left of Back (120+8) + Export (110+8)
+            autopsyBtn.OffsetLeft -= 246f;
+            autopsyBtn.Pressed += OpenAutopsy;
+            AddChild(autopsyBtn);
+
             // Status line under the header (shows the export destination after a click).
             _statusLabel = UiTheme.MakeLabel("", SectionColor, UiTheme.SmallFontSize);
             _statusLabel.ClipText = true;
@@ -121,12 +151,17 @@ namespace CharacterManager.UI
             BuildFilterBar(filterY);
 
             float scrollY = filterY + 34f;
-            var scroll = new ScrollContainer();
+            var scroll = new ScrollContainer
+            {
+                // Vertical-only: the content is forced to the column width and laid out in two columns.
+                HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            };
             UiTheme.PlaceColumnStretch(scroll, scrollY, UiTheme.PaddingTop);
             AddChild(scroll);
 
+            // Host that we clear+rebuild on every refresh. It holds a single child: the two-column row
+            // (built in BeginColumns), so sections can be balanced across a left and right column.
             _contentContainer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            _contentContainer.AddThemeConstantOverride("separation", 10);
             scroll.AddChild(_contentContainer);
         }
 
@@ -154,6 +189,53 @@ namespace CharacterManager.UI
                 bar.AddChild(btn);
                 _filterBtns.Add((mode, btn));
             }
+
+            // Spacer, then the two composite-filter cycle buttons (ascension floor + recent window).
+            bar.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
+
+            _ascBtn = UiTheme.MakeButton(AscLabel(), UiTheme.Body, 96f);
+            _ascBtn.TooltipText = "Minimum ascension to include";
+            _ascBtn.Pressed += CycleAscension;
+            bar.AddChild(_ascBtn);
+
+            _recentBtn = UiTheme.MakeButton(RecentLabel(), UiTheme.Body, 110f);
+            _recentBtn.TooltipText = "Limit to the most recent runs";
+            _recentBtn.Pressed += CycleRecent;
+            bar.AddChild(_recentBtn);
+
+            _upgradeBtn = UiTheme.MakeButton(UpgradeLabel(), UiTheme.Body, 120f);
+            _upgradeBtn.TooltipText = "Treat upgraded cards (Strike+) as separate from their base card";
+            _upgradeBtn.Pressed += ToggleUpgradeAware;
+            bar.AddChild(_upgradeBtn);
+        }
+
+        private string AscLabel() => _minAscension <= 0 ? "Asc: Any" : $"Asc: {_minAscension}+";
+        private string RecentLabel() => _recentCount <= 0 ? "Recent: All" : $"Recent: {_recentCount}";
+        private string UpgradeLabel() => _cardUpgradeAware ? "Upgrades: On" : "Upgrades: Off";
+
+        private void ToggleUpgradeAware()
+        {
+            _cardUpgradeAware = !_cardUpgradeAware;
+            if (_upgradeBtn != null) _upgradeBtn.Text = UpgradeLabel();
+            UpdateDisplay();
+        }
+
+        private void CycleAscension()
+        {
+            int idx = Array.IndexOf(AscSteps, _minAscension);
+            idx = idx < 0 ? 0 : (idx + 1) % AscSteps.Length;
+            _minAscension = AscSteps[idx];
+            if (_ascBtn != null) _ascBtn.Text = AscLabel();
+            UpdateDisplay();
+        }
+
+        private void CycleRecent()
+        {
+            int idx = Array.IndexOf(RecentSteps, _recentCount);
+            idx = idx < 0 ? 0 : (idx + 1) % RecentSteps.Length;
+            _recentCount = RecentSteps[idx];
+            if (_recentBtn != null) _recentBtn.Text = RecentLabel();
+            UpdateDisplay();
         }
 
         private void RefreshFilterButton(Button btn, GameModeFilter mode)
@@ -178,14 +260,27 @@ namespace CharacterManager.UI
         private void UpdateDisplay()
         {
             if (_contentContainer == null) return;
-            foreach (Node child in _contentContainer.GetChildren())
-                child.QueueFree();
+            BeginColumns();
 
             var c = _character;
             if (c == null) return;
 
             var stats = GetStats(c);
             var full = _fullAgg;
+
+            // The Summary panel is sourced from CharacterStats (the game's official, Standard-only
+            // lifetime tallies), so it's only meaningful on the All and Standard tabs. Hide it on
+            // Custom/Daily, where those numbers don't correspond to the runs being shown.
+            bool showSummary = _currentFilter == GameModeFilter.All
+                            || _currentFilter == GameModeFilter.Standard;
+
+            if (full != null && full.LoadFailed)
+            {
+                AddTextSection("Run History",
+                    "Couldn't read run history yet (the save system may still be loading). Re-open this screen to retry.");
+                if (stats != null && showSummary) AddSummarySection(stats);
+                return;
+            }
 
             if (stats == null && (full == null || full.Total == 0))
             {
@@ -194,35 +289,51 @@ namespace CharacterManager.UI
                 return;
             }
 
-            GameModeFilter filter = _currentFilter;
-
-            // Official Standard summary (always shown, from CharacterStats).
-            if (stats != null)
+            // Official, Standard-only lifetime summary (CharacterStats) — shown only on the
+            // All/Standard tabs (see showSummary above); hidden on Custom/Daily.
+            if (stats != null && showSummary)
                 AddSummarySection(stats);
 
-            // Filtered run-history view.
-            var agg = (full != null && filter != GameModeFilter.All)
-                ? full.GetFiltered(filter)
-                : full;
+            // Win-rate moving windows: scoped by game-mode + ascension, but NOT by the recent-N cap
+            // (the windows are themselves "last N"). Computed off its own filtered aggregate.
+            var windowAgg = full?.GetFiltered(new RunFilter(_currentFilter, _minAscension, 0));
+            if (windowAgg != null && windowAgg.Total > 0)
+                AddWinRateWindows(windowAgg);
+
+            // Main filtered view (mode + ascension + recent-N).
+            var agg = full?.GetFiltered(new RunFilter(_currentFilter, _minAscension, _recentCount));
 
             if (agg != null && agg.Total > 0)
             {
-                if (filter == GameModeFilter.All)
-                {
-                    // Show separate Custom/Daily section only in All view.
-                    if (full!.CustomTotal > 0)
-                        AddCustomDailySection(full);
-                }
+                string suffix = FilterSuffix();
 
-                string filterSuffix = filter == GameModeFilter.All ? "all runs" : $"{filter} runs";
-                AddRunDetailsSection(agg, filterSuffix);
-                AddAscensionBars(agg, filterSuffix);
-                AddActBars(agg, filterSuffix);
+                if (_currentFilter == GameModeFilter.All && agg.CustomTotal > 0)
+                    AddCustomDailySection(agg);
+
+                AddRunDetailsSection(agg, suffix);
+                AddCardSections(agg);
+                AddCombatSections(agg);
+                AddInventorySections(agg);
+                AddAscensionBars(agg, suffix);
+                AddActBars(agg, suffix);
+                AddFloorBars(agg, suffix);
             }
-            else if (agg == null || agg.Total == 0)
+            else
             {
-                AddTextSection("Summary", $"No {filter.ToString().ToLowerInvariant()} runs recorded.");
+                AddTextSection("Run History", $"No runs match the current filter ({FilterSuffix()}).");
             }
+        }
+
+        /// <summary>Human-readable description of the active composite filter.</summary>
+        private string FilterSuffix()
+        {
+            var parts = new List<string>
+            {
+                _currentFilter == GameModeFilter.All ? "all runs" : $"{_currentFilter} runs",
+            };
+            if (_minAscension > 0) parts.Add($"A{_minAscension}+");
+            if (_recentCount > 0) parts.Add($"last {_recentCount}");
+            return string.Join(", ", parts);
         }
 
         // ─── Content (rebuilt each open) ──────────────────────────────────────
@@ -234,7 +345,7 @@ namespace CharacterManager.UI
             return null;
         }
 
-        private void PopulateContent()
+        private async void PopulateContent()
         {
             var c = _character;
             if (c == null)
@@ -247,9 +358,30 @@ namespace CharacterManager.UI
             if (_subtitleLabel != null) _subtitleLabel.Text = "Analytics";
             if (_statusLabel != null) _statusLabel.Text = ""; // clear any prior export message
 
-            // Load full aggregate once.
-            _fullAgg = CharacterAnalytics.Compute(c.Id);
+            // Reset all filter axes on each fresh open.
             _currentFilter = GameModeFilter.All;
+            _minAscension = 0;
+            _recentCount = 0;
+            _cardUpgradeAware = false;
+            foreach (var (mode, btn) in _filterBtns) RefreshFilterButton(btn, mode);
+            if (_ascBtn != null) _ascBtn.Text = AscLabel();
+            if (_recentBtn != null) _recentBtn.Text = RecentLabel();
+            if (_upgradeBtn != null) _upgradeBtn.Text = UpgradeLabel();
+
+            // Paint a placeholder first, then defer the parse one frame so the screen appears
+            // immediately instead of stalling on disk reads (M8, plan §4a). The aggregate is read
+            // through AnalyticsCache, so re-opens of the same character are instant.
+            BeginColumns();
+            AddTextSection("Run History", "Crunching run history…");
+
+            var tree = GetTree();
+            if (tree != null)
+                await ToSignal(tree, SceneTree.SignalName.ProcessFrame);
+
+            // The screen may have been popped or switched to another character during the await.
+            if (!IsInstanceValid(this) || _character != c) return;
+
+            _fullAgg = AnalyticsCache.Get(c.Id);
             UpdateDisplay();
         }
 
@@ -285,9 +417,9 @@ namespace CharacterManager.UI
                 ("Total playtime", stats != null ? FormatDuration(stats.Playtime) : "—"),
                 ("Badges earned", stats?.Badges != null ? stats.Badges.Count.ToString() : "0"),
             };
-            AddStatsGrid(body, rows, 2);
+            AddStatsGrid(body, rows, 1);
 
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>Custom + Daily runs — recorded in run history but excluded from official stats.</summary>
@@ -302,7 +434,8 @@ namespace CharacterManager.UI
                 (MutedColor, agg.CustomAbandoned),
             };
             var bar = UiTheme.MakeBarTrack(18f, segs, 0f);
-            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(agg.CustomWins, agg.CustomTotal - agg.CustomWins), BarValueWidth));
+            // Decisive win rate (abandons excluded), consistent with the Win Rate windows section.
+            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(agg.CustomWins, agg.CustomDeaths), BarValueWidth));
 
             body.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 4f), MouseFilter = MouseFilterEnum.Ignore });
 
@@ -313,13 +446,13 @@ namespace CharacterManager.UI
                 ("Deaths", agg.CustomDeaths.ToString()),
                 ("Abandoned", agg.CustomAbandoned.ToString()),
             };
-            AddStatsGrid(body, rows, 2);
+            AddStatsGrid(body, rows, 1);
 
             body.AddChild(UiTheme.MakeLabel(
-                "These runs are not counted by the game's official stats.",
+                "Win rate excludes abandons. These runs are not counted by the game's official stats.",
                 MutedColor, UiTheme.SmallFontSize));
 
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>Run details across recorded runs (not win/loss tallies).</summary>
@@ -340,9 +473,9 @@ namespace CharacterManager.UI
                 ("Longest run", FormatDuration(agg.MaxRunTime)),
                 ("Fastest clear", agg.FastestWin >= 0 ? FormatDuration(agg.FastestWin) : "—"),
             };
-            AddStatsGrid(body, rows, 2);
+            AddStatsGrid(body, rows, 1);
 
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>Lays label/value pairs out in <paramref name="columns"/> equal columns to fill width.</summary>
@@ -371,6 +504,361 @@ namespace CharacterManager.UI
             body.AddChild(grid);
         }
 
+        /// <summary>Win rate over recent windows (last 10 / 50 / 100 / all decisive runs). M8.</summary>
+        private void AddWinRateWindows(CharacterAnalytics agg)
+        {
+            var panel = MakeSectionPanel("Win Rate  (recent windows)", out var body);
+            foreach (int n in new[] { 10, 50, 100, 0 })
+            {
+                var (wins, decisive, rate) = agg.WinRateWindow(n);
+                string label = n <= 0 ? "All runs" : $"Last {n}";
+
+                if (decisive <= 0)
+                {
+                    var empty = UiTheme.MakeBarTrack(16f, Array.Empty<(Color, float)>(), 1f);
+                    body.AddChild(UiTheme.MakeBarRow(label, BarLabelWidth, empty, "—", BarValueWidth));
+                    continue;
+                }
+
+                var segs = new (Color, float)[] { (UiTheme.Good, (float)rate) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0f, 100f - (float)rate));
+                body.AddChild(UiTheme.MakeBarRow(label, BarLabelWidth, bar, $"{rate:0.#}% ({wins}/{decisive})", BarValueWidth));
+            }
+            body.AddChild(UiTheme.MakeLabel(
+                "Win rate over the most recent decisive runs (abandons excluded).",
+                MutedColor, UiTheme.SmallFontSize));
+            AddSection(panel);
+        }
+
+        private void AddFloorBars(CharacterAnalytics agg, string label)
+        {
+            if (agg.FloorReached.Count == 0) return;
+            var panel = MakeSectionPanel($"Floors Reached Distribution  ({label})", out var body);
+            var keys = new List<int>(agg.FloorReached.Keys);
+            keys.Sort();
+            int maxCount = 1;
+            foreach (var f in keys) maxCount = Math.Max(maxCount, agg.FloorReached[f]);
+            foreach (var f in keys)
+            {
+                int count = agg.FloorReached[f];
+                var segs = new (Color, float)[] { (UiTheme.Heading, count) };
+                var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxCount - count));
+                body.AddChild(UiTheme.MakeBarRow($"{f} floor{(f == 1 ? "" : "s")}", BarLabelWidth, bar,
+                    $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
+            }
+            AddSection(panel);
+        }
+
+        // ─── Card analytics (M9) ─────────────────────────────────────────────
+
+        /// <summary>Builds the four card ranked lists from the filtered aggregate.</summary>
+        private void AddCardSections(CharacterAnalytics agg)
+        {
+            var stats = agg.ComputeCardStats(_cardUpgradeAware);
+
+            bool anyData = false;
+            foreach (var s in stats)
+                if (s.Offered > 0 || s.RunsWith > 0) { anyData = true; break; }
+            if (!anyData)
+            {
+                AddTextSection("Cards",
+                    "No card data recorded for these runs yet. Card pick / win-rate stats come from per-floor reward history, which runs from older builds may not include.");
+                return;
+            }
+
+            // Most picked — by raw pick count.
+            var mostPicked = new List<CardStat>(stats);
+            mostPicked.RemoveAll(s => s.Picks <= 0);
+            mostPicked.Sort((a, b) => b.Picks.CompareTo(a.Picks));
+            AddCardListSection("Most Picked Cards", mostPicked,
+                s => $"{s.Picks} pick{(s.Picks == 1 ? "" : "s")}" + (s.Offered > 0 ? $"  {s.PickRatePct:0.#}%" : ""),
+                s => s.Picks, UiTheme.Heading);
+
+            // Highest / lowest win rate among cards seen in enough runs (caveat 6).
+            var rated = new List<CardStat>(stats);
+            rated.RemoveAll(s => s.RunsWith < CardMinSample);
+
+            var best = new List<CardStat>(rated);
+            best.Sort((a, b) => b.WinRatePct.CompareTo(a.WinRatePct));
+            AddCardListSection($"Highest Win Rate  (≥{CardMinSample} runs)", best,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Good, 100f);
+
+            var worst = new List<CardStat>(rated);
+            worst.Sort((a, b) => a.WinRatePct.CompareTo(b.WinRatePct));
+            AddCardListSection($"Lowest Win Rate  (≥{CardMinSample} runs)", worst,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Bad, 100f);
+
+            // Most avoided — offered enough times but rarely taken (caveat 6).
+            var avoided = new List<CardStat>(stats);
+            avoided.RemoveAll(s => s.Offered < CardMinSample);
+            avoided.Sort((a, b) =>
+            {
+                int c = a.PickRatePct.CompareTo(b.PickRatePct);
+                return c != 0 ? c : b.Offered.CompareTo(a.Offered);
+            });
+            AddCardListSection($"Most Avoided  (≥{CardMinSample} offers)", avoided,
+                s => $"{s.PickRatePct:0.#}% taken ({s.Picks}/{s.Offered})",
+                s => (float)Math.Max(0, s.PickRatePct), UiTheme.Muted, 100f);
+        }
+
+        /// <summary>One capped, bar-ranked card list. <paramref name="maxWeight"/> &gt; 0 fixes the bar
+        /// scale (e.g. 100 for percentages); 0 auto-scales to the largest shown value.</summary>
+        private void AddCardListSection(string heading, List<CardStat> list,
+            Func<CardStat, string> value, Func<CardStat, float> weight, Color color, float maxWeight = 0f)
+        {
+            if (list.Count == 0) return;
+
+            int shown = Math.Min(CardListLimit, list.Count);
+            string h = list.Count > shown ? $"{heading}  (top {shown} of {list.Count})" : heading;
+            var panel = MakeSectionPanel(h, out var body);
+
+            float max = maxWeight;
+            if (max <= 0f) { max = 1f; for (int i = 0; i < shown; i++) max = Math.Max(max, weight(list[i])); }
+
+            for (int i = 0; i < shown; i++)
+            {
+                var s = list[i];
+                body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
+            }
+            AddSection(panel);
+        }
+
+        // ─── Encounter & death analytics (M10) ───────────────────────────────
+
+        private void AddCombatSections(CharacterAnalytics agg)
+        {
+            var tiers = agg.ComputeTierStats();
+            bool anyCombat = false;
+            foreach (var t in tiers) if (t.Fights > 0) { anyCombat = true; break; }
+            if (!anyCombat)
+            {
+                AddTextSection("Combat",
+                    "No combat data recorded for these runs yet. Encounter / death stats come from per-floor combat history, which runs from older builds may not include.");
+                return;
+            }
+
+            AddTierTable(tiers);
+
+            var encounters = agg.ComputeEncounterStats();
+
+            // Deadliest encounters — death rate, min fights (caveat 6).
+            var deadliest = new List<EncounterStat>(encounters);
+            deadliest.RemoveAll(e => e.Fights < CombatMinSample || e.Deaths <= 0);
+            deadliest.Sort((a, b) =>
+            {
+                int c = b.DeathRatePct.CompareTo(a.DeathRatePct);
+                return c != 0 ? c : b.Deaths.CompareTo(a.Deaths);
+            });
+            AddEncounterListSection($"Deadliest Encounters  (≥{CombatMinSample} fights)", deadliest,
+                e => $"{e.DeathRatePct:0.#}% ({e.Deaths}/{e.Fights})",
+                e => (float)Math.Max(0, e.DeathRatePct), UiTheme.Bad, 100f);
+
+            // Most damaging encounters — average damage taken + p80, min fights.
+            var damaging = new List<EncounterStat>(encounters);
+            damaging.RemoveAll(e => e.Fights < CombatMinSample);
+            damaging.Sort((a, b) => b.AvgDamage.CompareTo(a.AvgDamage));
+            AddEncounterListSection($"Most Damaging Encounters  (≥{CombatMinSample} fights)", damaging,
+                e => $"avg {e.AvgDamage:0}  ·  p80 {CharacterAnalytics.Percentile(e.Damages, 80)}",
+                e => (float)e.AvgDamage, UiTheme.Heading, 0f);
+
+            AddDeathCausesSection(agg.ComputeDeathCauses());
+        }
+
+        /// <summary>Compact Tier / Fights / Deaths / Death% / Avg-dmg table (M10).</summary>
+        private void AddTierTable(List<TierStat> tiers)
+        {
+            var panel = MakeSectionPanel("Combat by Tier", out var body);
+
+            var grid = new GridContainer { Columns = 5, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            grid.AddThemeConstantOverride("h_separation", 24);
+            grid.AddThemeConstantOverride("v_separation", 4);
+
+            void Cell(string text, Color color, HorizontalAlignment align = HorizontalAlignment.Left)
+            {
+                var l = UiTheme.MakeLabel(text, color, UiTheme.BodyFontSize, align);
+                l.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+                grid.AddChild(l);
+            }
+
+            Cell("Tier", MutedColor); Cell("Fights", MutedColor, HorizontalAlignment.Right);
+            Cell("Deaths", MutedColor, HorizontalAlignment.Right); Cell("Death %", MutedColor, HorizontalAlignment.Right);
+            Cell("Avg dmg", MutedColor, HorizontalAlignment.Right);
+
+            foreach (var tier in new[] { RoomType.Monster, RoomType.Elite, RoomType.Boss })
+            {
+                TierStat? s = null;
+                foreach (var t in tiers) if (t.Tier == tier) { s = t; break; }
+                if (s == null || s.Fights == 0) continue;
+
+                Cell(TierName(tier), BodyColor);
+                Cell(s.Fights.ToString(), BodyColor, HorizontalAlignment.Right);
+                Cell(s.Deaths.ToString(), BodyColor, HorizontalAlignment.Right);
+                Cell(s.DeathRatePct >= 0 ? $"{s.DeathRatePct:0.#}%" : "—", BodyColor, HorizontalAlignment.Right);
+                Cell($"{s.AvgDamage:0}", BodyColor, HorizontalAlignment.Right);
+            }
+
+            body.AddChild(grid);
+            AddSection(panel);
+        }
+
+        private void AddDeathCausesSection(List<DeathCauseStat> causes)
+        {
+            int total = 0;
+            foreach (var d in causes) total += d.Count;
+            if (total <= 0) return;
+
+            causes.Sort((a, b) => b.Count.CompareTo(a.Count));
+            int shown = Math.Min(CardListLimit, causes.Count);
+            string heading = causes.Count > shown ? $"Death Causes  (top {shown} of {causes.Count})" : "Death Causes";
+            var panel = MakeSectionPanel(heading, out var body);
+
+            int max = 1;
+            for (int i = 0; i < shown; i++) max = Math.Max(max, causes[i].Count);
+
+            for (int i = 0; i < shown; i++)
+            {
+                var d = causes[i];
+                double pct = 100.0 * d.Count / total;
+                Color col = d.Source switch
+                {
+                    DeathSource.Combat => UiTheme.Bad,
+                    DeathSource.Event => UiTheme.Heading,
+                    _ => UiTheme.Muted,
+                };
+                string label = d.Source == DeathSource.Event ? d.Name + "  (event)" : d.Name;
+                body.AddChild(UiTheme.MakeRankedRow(label, $"{d.Count} ({pct:0.#}%)", d.Count, max, col));
+            }
+            AddSection(panel);
+        }
+
+        /// <summary>One capped, bar-ranked encounter list (mirrors <see cref="AddCardListSection"/>).</summary>
+        private void AddEncounterListSection(string heading, List<EncounterStat> list,
+            Func<EncounterStat, string> value, Func<EncounterStat, float> weight, Color color, float maxWeight = 0f)
+        {
+            if (list.Count == 0) return;
+
+            int shown = Math.Min(CardListLimit, list.Count);
+            string h = list.Count > shown ? $"{heading}  (top {shown} of {list.Count})" : heading;
+            var panel = MakeSectionPanel(h, out var body);
+
+            float max = maxWeight;
+            if (max <= 0f) { max = 1f; for (int i = 0; i < shown; i++) max = Math.Max(max, weight(list[i])); }
+
+            for (int i = 0; i < shown; i++)
+            {
+                var s = list[i];
+                body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
+            }
+            AddSection(panel);
+        }
+
+        private static string TierName(RoomType tier) => tier switch
+        {
+            RoomType.Monster => "Normal",
+            RoomType.Elite => "Elite",
+            RoomType.Boss => "Boss",
+            _ => tier.ToString(),
+        };
+
+        // ─── Relic / potion / ancient analytics (M11) ────────────────────────
+
+        private void AddInventorySections(CharacterAnalytics agg)
+        {
+            AddPickGroup("Relics", agg.ComputeRelicStats(), includeMostPicked: true);
+            AddPickGroup("Potions", agg.ComputePotionStats(), includeMostPicked: false);
+            AddAncientSections(agg.ComputeAncientStats());
+        }
+
+        /// <summary>Most-picked (optional) + highest/lowest win-rate lists for relics or potions.</summary>
+        private void AddPickGroup(string noun, List<PickStat> stats, bool includeMostPicked)
+        {
+            bool any = false;
+            foreach (var s in stats) if (s.RunsWith > 0 || s.Offered > 0) { any = true; break; }
+            if (!any) return;
+
+            if (includeMostPicked)
+            {
+                var picked = new List<PickStat>(stats);
+                picked.RemoveAll(s => s.Picks <= 0);
+                if (picked.Count > 0)
+                {
+                    picked.Sort((a, b) => b.Picks.CompareTo(a.Picks));
+                    AddPickListSection($"Most Picked {noun}", picked,
+                        s => $"{s.Picks} pick{(s.Picks == 1 ? "" : "s")}" + (s.Offered > 0 ? $"  {s.PickRatePct:0.#}%" : ""),
+                        s => s.Picks, UiTheme.Heading);
+                }
+            }
+
+            var rated = new List<PickStat>(stats);
+            rated.RemoveAll(s => s.RunsWith < CardMinSample);
+            if (rated.Count == 0) return;
+
+            var best = new List<PickStat>(rated);
+            best.Sort((a, b) => b.WinRatePct.CompareTo(a.WinRatePct));
+            AddPickListSection($"{noun} — Highest Win Rate  (≥{CardMinSample} runs)", best,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Good, 100f);
+
+            var worst = new List<PickStat>(rated);
+            worst.Sort((a, b) => a.WinRatePct.CompareTo(b.WinRatePct));
+            AddPickListSection($"{noun} — Lowest Win Rate  (≥{CardMinSample} runs)", worst,
+                s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                s => (float)Math.Max(0, s.WinRatePct), UiTheme.Bad, 100f);
+        }
+
+        private void AddAncientSections(List<PickStat> ancients)
+        {
+            bool any = false;
+            foreach (var s in ancients) if (s.Offered > 0) { any = true; break; }
+            if (!any) return;
+
+            // Most-taken ancient options (pick rate, min offers).
+            var picked = new List<PickStat>(ancients);
+            picked.RemoveAll(s => s.Offered < CardMinSample);
+            picked.Sort((a, b) =>
+            {
+                int c = b.PickRatePct.CompareTo(a.PickRatePct);
+                return c != 0 ? c : b.Picks.CompareTo(a.Picks);
+            });
+            AddPickListSection($"Ancient Choices — Most Taken  (≥{CardMinSample} offers)", picked,
+                s => $"{s.PickRatePct:0.#}% taken ({s.Picks}/{s.Offered})",
+                s => (float)Math.Max(0, s.PickRatePct), UiTheme.Heading, 100f);
+
+            // Win rate when an ancient option was taken (min chosen runs).
+            var rated = new List<PickStat>(ancients);
+            rated.RemoveAll(s => s.RunsWith < CardMinSample);
+            if (rated.Count > 0)
+            {
+                rated.Sort((a, b) => b.WinRatePct.CompareTo(a.WinRatePct));
+                AddPickListSection($"Ancient Choices — Highest Win Rate  (≥{CardMinSample} taken)", rated,
+                    s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
+                    s => (float)Math.Max(0, s.WinRatePct), UiTheme.Good, 100f);
+            }
+        }
+
+        /// <summary>One capped, bar-ranked pick-stat list (mirrors <see cref="AddCardListSection"/>).</summary>
+        private void AddPickListSection(string heading, List<PickStat> list,
+            Func<PickStat, string> value, Func<PickStat, float> weight, Color color, float maxWeight = 0f)
+        {
+            if (list.Count == 0) return;
+
+            int shown = Math.Min(CardListLimit, list.Count);
+            string h = list.Count > shown ? $"{heading}  (top {shown} of {list.Count})" : heading;
+            var panel = MakeSectionPanel(h, out var body);
+
+            float max = maxWeight;
+            if (max <= 0f) { max = 1f; for (int i = 0; i < shown; i++) max = Math.Max(max, weight(list[i])); }
+
+            for (int i = 0; i < shown; i++)
+            {
+                var s = list[i];
+                body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
+            }
+            AddSection(panel);
+        }
+
         private void AddAscensionBars(CharacterAnalytics agg, string label)
         {
             var panel = MakeSectionPanel($"By Ascension  ({label})", out var body);
@@ -385,7 +873,7 @@ namespace CharacterManager.UI
                 var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxGames - (w + l)));
                 body.AddChild(UiTheme.MakeBarRow($"Ascension {asc}", BarLabelWidth, bar, $"{w}W / {l}L", BarValueWidth));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddActBars(CharacterAnalytics agg, string label)
@@ -402,7 +890,37 @@ namespace CharacterManager.UI
                 var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxCount - count));
                 body.AddChild(UiTheme.MakeBarRow($"Reached act {act}", BarLabelWidth, bar, $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
+        }
+
+        // ─── Run autopsy (M12) ───────────────────────────────────────────────
+
+        private CharacterRunAutopsyScreen? _autopsyScreen;
+
+        private void OpenAutopsy()
+        {
+            if (_stack == null || _character == null) return;
+            if (_fullAgg == null || _fullAgg.Runs.Count == 0)
+            {
+                if (_statusLabel != null)
+                {
+                    _statusLabel.AddThemeColorOverride("font_color", MutedColor);
+                    _statusLabel.Text = "No runs recorded to inspect.";
+                }
+                return;
+            }
+
+            // Newest first; the autopsy opens on the most recent run.
+            var runs = new List<RunSummary>(_fullAgg.Runs);
+            runs.Sort((a, b) => b.StartTime.CompareTo(a.StartTime));
+
+            if (_autopsyScreen == null || !GodotObject.IsInstanceValid(_autopsyScreen))
+            {
+                _autopsyScreen = new CharacterRunAutopsyScreen { Visible = false };
+                _stack.AddChild(_autopsyScreen);
+            }
+            _autopsyScreen.SetRuns(_character, runs, 0);
+            _stack.Push(_autopsyScreen);
         }
 
         // ─── Export (M5) ─────────────────────────────────────────────────────
@@ -415,7 +933,7 @@ namespace CharacterManager.UI
             if (result.Ok)
             {
                 _statusLabel.AddThemeColorOverride("font_color", SectionColor);
-                _statusLabel.Text = "Exported JSON + CSV to:  " + result.Directory;
+                _statusLabel.Text = $"Exported {result.Files.Count} files (JSON + CSVs) to:  " + result.Directory;
             }
             else
             {
@@ -468,7 +986,7 @@ namespace CharacterManager.UI
 
                 body.AddChild(line);
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddListSection(string heading, List<string> items)
@@ -491,7 +1009,7 @@ namespace CharacterManager.UI
                     body.AddChild(lbl);
                 }
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddTextSection(string heading, string text)
@@ -506,7 +1024,66 @@ namespace CharacterManager.UI
             lbl.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
             lbl.AddThemeColorOverride("font_color", BodyColor);
             body.AddChild(lbl);
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
+        }
+
+        // ─── Two-column distribution ─────────────────────────────────────────
+
+        /// <summary>Clears the content host and rebuilds the empty two-column row + resets the balancer.</summary>
+        private void BeginColumns()
+        {
+            if (_contentContainer == null) return;
+            foreach (Node child in _contentContainer.GetChildren()) child.QueueFree();
+
+            var cols = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            cols.AddThemeConstantOverride("separation", 16);
+            _contentContainer.AddChild(cols);
+
+            _colLeft = NewColumn();
+            _colRight = NewColumn();
+            cols.AddChild(_colLeft);
+            cols.AddChild(_colRight);
+            _leftWeight = 0f;
+            _rightWeight = 0f;
+        }
+
+        private static VBoxContainer NewColumn()
+        {
+            var col = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f };
+            col.AddThemeConstantOverride("separation", 12);
+            return col;
+        }
+
+        /// <summary>Adds a section panel to whichever column is currently shorter (greedy height balance).</summary>
+        private void AddSection(PanelContainer panel)
+        {
+            if (_colLeft == null || _colRight == null) BeginColumns();
+            if (_colLeft == null || _colRight == null) { _contentContainer!.AddChild(panel); return; }
+
+            float weight = EstimateSectionWeight(panel);
+            if (_leftWeight <= _rightWeight) { _colLeft.AddChild(panel); _leftWeight += weight; }
+            else { _colRight.AddChild(panel); _rightWeight += weight; }
+        }
+
+        /// <summary>Rough height proxy for column balancing: a base for the header + chrome plus the
+        /// number of descendant rows. Doesn't need to be exact — just enough to keep the two columns
+        /// near the same length.</summary>
+        private static float EstimateSectionWeight(Node panel)
+        {
+            return 3f + CountLeafRows(panel);
+        }
+
+        private static int CountLeafRows(Node node)
+        {
+            int n = 0;
+            foreach (Node child in node.GetChildren())
+            {
+                // Count "row-ish" leaves (bar rows, grid cells, labels) rather than every container.
+                if (child is HBoxContainer || child is Label || child is GridContainer)
+                    n += 1;
+                n += CountLeafRows(child);
+            }
+            return n;
         }
 
         private static PanelContainer MakeSectionPanel(string heading, out VBoxContainer body)

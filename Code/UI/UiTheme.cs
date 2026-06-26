@@ -1,3 +1,4 @@
+using System;
 using Godot;
 using MegaCrit.Sts2.Core.Helpers;
 
@@ -256,22 +257,48 @@ namespace CharacterManager.UI
             hbox.AddThemeConstantOverride("separation", 0);
             track.AddChild(hbox);
 
+            // Identify the first/last drawn segments so we can round only the OUTER corners of the
+            // fill — the left end always rounds to meet the groove; the right end rounds only when the
+            // bar is completely full (no empty remainder). Interior segment joins stay square. This is
+            // what makes the colour follow the pill shape instead of poking square corners out of it.
             float total = emptyWeight < 0f ? 0f : emptyWeight;
-            foreach (var seg in segments) if (seg.weight > 0f) total += seg.weight;
+            int firstFilled = -1, lastFilled = -1;
+            for (int i = 0; i < segments.Length; i++)
+            {
+                if (segments[i].weight <= 0f) continue;
+                total += segments[i].weight;
+                if (firstFilled < 0) firstFilled = i;
+                lastFilled = i;
+            }
             if (total <= 0f) return track; // nothing to draw — just the empty groove
 
-            foreach (var seg in segments)
+            bool hasEmpty = emptyWeight > 0f;
+            for (int i = 0; i < segments.Length; i++)
             {
+                var seg = segments[i];
                 if (seg.weight <= 0f) continue;
-                hbox.AddChild(new ColorRect
+
+                var fill = new Panel
                 {
-                    Color = seg.color,
                     SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                     SizeFlagsStretchRatio = seg.weight,
                     MouseFilter = Control.MouseFilterEnum.Ignore,
-                });
+                };
+                var fillStyle = new StyleBoxFlat { BgColor = seg.color };
+                if (i == firstFilled)
+                {
+                    fillStyle.CornerRadiusTopLeft = radius;
+                    fillStyle.CornerRadiusBottomLeft = radius;
+                }
+                if (i == lastFilled && !hasEmpty)
+                {
+                    fillStyle.CornerRadiusTopRight = radius;
+                    fillStyle.CornerRadiusBottomRight = radius;
+                }
+                fill.AddThemeStyleboxOverride("panel", fillStyle);
+                hbox.AddChild(fill);
             }
-            if (emptyWeight > 0f)
+            if (hasEmpty)
                 hbox.AddChild(new Control
                 {
                     SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
@@ -298,6 +325,47 @@ namespace CharacterManager.UI
             var v = MakeLabel(value, Body, BodyFontSize, HorizontalAlignment.Right);
             v.CustomMinimumSize = new Vector2(valueWidth, 0f);
             v.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            row.AddChild(v);
+
+            return row;
+        }
+
+        /// <summary>
+        /// A ranked-list row (M8, plan §4c): left <paramref name="name"/> that expands to fill,
+        /// a fixed-width proportional bar showing <paramref name="fillWeight"/> out of
+        /// <paramref name="maxWeight"/>, and a right-aligned <paramref name="value"/> column. The
+        /// shared row shape behind card / relic / encounter / death lists (M9+). Sorting and a
+        /// show-more affordance are layered on by the caller; this is just the row primitive.
+        /// </summary>
+        public static HBoxContainer MakeRankedRow(
+            string name, string value, float fillWeight, float maxWeight, Color fill,
+            float nameWidth = 150f, float valueWidth = 108f, float height = 16f)
+        {
+            var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            row.AddThemeConstantOverride("separation", 10);
+
+            // Fixed name column (clipped, full name on hover) so every bar in the list starts at the
+            // same x. The bar then EXPANDS to fill the slack up to the fixed value column — no dead gap
+            // between the name and a right-anchored bar, and bars line up start AND end across rows.
+            var n = MakeLabel(name, Body, BodyFontSize);
+            n.CustomMinimumSize = new Vector2(nameWidth, 0f);
+            n.SizeFlagsHorizontal = Control.SizeFlags.Fill; // fixed at min width (no Expand)
+            n.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            n.ClipText = true;
+            n.TooltipText = name;
+            row.AddChild(n);
+
+            float empty = maxWeight > 0f ? Math.Max(0f, maxWeight - Math.Max(0f, fillWeight)) : 0f;
+            var bar = MakeBarTrack(height, new[] { (fill, Math.Max(0f, fillWeight)) }, empty);
+            bar.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; // fill the space between name and value
+            bar.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            row.AddChild(bar);
+
+            var v = MakeLabel(value, Body, BodyFontSize, HorizontalAlignment.Right);
+            v.CustomMinimumSize = new Vector2(valueWidth, 0f);
+            v.SizeFlagsHorizontal = Control.SizeFlags.Fill;
+            v.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            v.ClipText = true;
             row.AddChild(v);
 
             return row;

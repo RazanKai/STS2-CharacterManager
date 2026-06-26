@@ -109,6 +109,142 @@ The Character Management Mod extends the existing **CustomCharacterStats** mod i
 
 **Verification:** Build clean, `check_mod_compatibility` 0 issues. **Verified in-game:** random draw respects the configured pool; in-select-hidden characters are absent from the strip, the pool panel, and the random draw (including the all-unchecked fallback)
 
+**M8 — Analytics foundations + quick wins — IN PROGRESS (beta, built + installed, manual test pending)**
+
+First milestone of the analytics expansion (`ANALYTICS_PLAN.md`). Ships the cross-cutting infrastructure the richer per-card / per-encounter milestones (M9–M12) depend on, plus three visible wins on the existing per-character analytics page. Still read-only over saves.
+
+**Infrastructure (plan §4):**
+- **Async/cached deep-parse scaffold (4a) — `Code/Analytics/AnalyticsCache.cs`:** process-wide cache of per-character `CharacterAnalytics`, so re-opening a character or toggling filters across opens is instant instead of re-reading every `.run` file. Invalidation uses a cheap *generation token* (count of run-history files) rather than a Harmony save hook — finishing a run (count up) or pruning (count down) forces a recompute. Snapshots whose file list couldn't be read (`CharacterAnalytics.LoadFailed`, save system not ready) are never cached, so the screen can't get pinned to zeros at startup (plan §4a poison guard).
+  - **Threading decision:** the plan suggests `Task.Run`, but `SaveManager` is a Godot singleton with unverified off-thread safety. M8 reads only cheap top-level fields, so aggregation runs on the main thread and the screen stays responsive by painting `"Crunching run history…"` and deferring the parse one frame (`await ToSignal(GetTree(), ProcessFrame)`). Revisit true off-thread parsing (read raw bytes off-thread, deserialize there) in M9 if the floor-by-floor walks make it heavy.
+- **Name resolver (4b) — `Code/Analytics/NameResolver.cs`:** `ModelId` → localized display name via `LocString.Exists` table-probing (`cards`/`relics`/`potions`/`encounters`/`monsters`/`events`, `.title`/`.name`), memoised, with a SCREAMING_SNAKE→Title-Case fallback so unknown/modded ids degrade gracefully and never crash. Infra for the M9+ ranked lists (not yet surfaced in the UI).
+- **Ranked-list row widget (4c) — `UiTheme.MakeRankedRow`:** the shared "name — proportional bar — value" row behind future card/relic/encounter/death lists, built on the existing bar primitives. Sort + show-more container deferred to M9, where it can be exercised against real lists.
+
+**Quick wins (plan §5 M8):**
+- **Floor-reached distribution bars** — new `CharacterAnalytics.FloorReached` dict, rendered alongside the existing act-reached bars.
+- **Win-rate moving windows** — last 10 / 50 / 100 / all decisive runs (abandons excluded), via `CharacterAnalytics.WinRateWindow(n)`; shown as its own bar section. Computed over the mode+ascension scope but independent of the recent-N cap.
+- **Expanded filter bar** — alongside All/Standard/Custom/Daily, two cycle buttons add a **minimum-ascension** floor (Any/1/5/10/15/20+) and a **recent-N window** (All/10/50/100). Driven by a new composite `RunFilter` (mode + min-ascension + recent-N); `GetFiltered(RunFilter)` re-derives every distribution and carries the surviving runs through so windows/floor bars/exports all work off the filtered aggregate.
+
+**Build fix:** freshly-cloned `references/` stats-mod clones (gitignored, studied for the plan) were being swept into compilation by the SDK's `**/*.cs` glob and collided. Added `<Compile Remove="references/**/*.cs" />` (+ EmbeddedResource/None) to `CharacterManager.csproj`.
+
+**Files:** `Code/Analytics/AnalyticsCache.cs` (new), `Code/Analytics/NameResolver.cs` (new), `Code/Analytics/CharacterAnalytics.cs` (RunFilter, FloorReached, LoadFailed, WinRateWindow, richer GetFiltered), `Code/UI/UiTheme.cs` (MakeRankedRow), `Code/UI/CharacterAnalyticsScreen.cs` (async cached populate, win-rate-windows + floor-bars sections, expanded filter bar), `CharacterManager.csproj` (exclude references/).
+
+**Post-test fixes (verified in-game on Ironclad, 32 runs):**
+- **Acts-reached correctness:** "Act Reached Distribution" / "Highest act reached" used `RunHistory.Acts.Count`, which is the run's *planned* act list (confirmed via `RunHistoryUtilities.CreateRunHistoryEntry`: `Acts = run.Acts.Select(...)`) — always ~3-4 regardless of progress, so a floor-1 death wrongly read as "reached act 3". Switched to `MapPointHistory.Count` (outer list = acts actually entered; inner = floors), the same source as floors-reached. Also corrects the JSON/CSV export (shared `Compute`).
+- **M4 / M8 consistency:** the Custom/Daily section's win rate counted abandons as losses (`wins/total`); aligned it to the decisive rate (`wins/(wins+deaths)`) used by the Win Rate windows, with an "excludes abandons" note.
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing nullable warnings), `validate_mod` valid. **Verified in-game:** win-rate windows, Asc/Recent filters, and floor-reached bars render correctly; act distribution now reflects real progression.
+
+**M9 — Card analytics (headline feature) — IN PROGRESS (beta, built + installed, manual test pending)**
+
+The biggest analytics upgrade: per-card pick / win-rate / avoidance lists, all from data already in the `.run` files. Built on the M8 cache + name resolver + ranked-row widget; respects every existing filter for free.
+
+**Deep parse (`CharacterAnalytics`):**
+- The per-run walk (already cached) now also extracts this character's card facts into new `RunSummary` fields: `CardChoices` (each offered card + `wasPicked`, per-occurrence), `DeckCards` (floor `CardsGained` ∪ the final `RunHistoryPlayer.Deck` snapshot), `RemovedCards`, `UpgradedCardIds`. Floor entries are matched to the character's player by `RunHistoryPlayer.Id` ↔ `PlayerMapPointHistoryEntry.PlayerId`, with a single-player fallback.
+- `ComputeCardStats(bool upgradeAware)` aggregates over the (filtered) run list into `CardStat` rows. Counting honours the §3 caveats: Offered/Picks per-occurrence; **RunsWith/WinsWith de-duped once per run** (caveat 3); **RunsWith sourced from the gained∪final-deck union** so starter cards aren't invisible (caveat 1). Re-runs cheaply on each filter change off the cached per-run facts.
+
+**UI (`CharacterAnalyticsScreen`):**
+- Four ranked lists via `UiTheme.MakeRankedRow`: **Most Picked** (by pick count + pick %), **Highest / Lowest Win Rate** (runs-with win %, min 3 runs — caveat 6), **Most Avoided** (lowest pick rate, min 3 offers). Each capped at top 10 with an "of N" note.
+- **Upgrades Off/On** toggle added to the filter bar: collapses Strike/Strike+ by default, or splits upgraded variants (caveat 4b / plan §4b). Card identity is the base `ModelId` (upgrade is a separate `CurrentUpgradeLevel` field), so collapse is the natural default.
+- Names resolved through the M8 `NameResolver` (localized title, graceful fallback). Empty-state note for runs from older builds that predate per-floor reward recording.
+
+**Data caveats encoded:** 1 (starter cards via deck union), 3 (once-per-run HashSet), 4b (upgrade-aware grouping), 6 (min-sample threshold). Caveats 2 (colored shop buys not captured) and 5/7/8 (encounters/ancients/Elo) are out of M9 scope — later milestones.
+
+**Files:** `Code/Analytics/CharacterAnalytics.cs` (CardChoiceRec/CardRef/CardStat, RunSummary card fields, ExtractCardFacts, ComputeCardStats), `Code/UI/CharacterAnalyticsScreen.cs` (card sections + upgrade toggle).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** four card lists render correctly; starter/basic cards correctly trend to/below baseline win rate (winning decks thin them out) — expected, not a bug.
+
+**M10 — Encounter & death analytics — IN PROGRESS (beta, built + installed, manual test pending)**
+
+Combat-side analytics from the same cached per-run walk. Tier comes from `RoomType` (Monster/Elite/Boss) directly — cleaner and less fragile than parsing the `ModelId` suffix (caveat 5 satisfied without string-munging).
+
+**Deep parse (`CharacterAnalytics`):**
+- `ExtractCombatFacts` records each combat per floor: encounter `ModelId`, tier (`RoomType` via `IsCombatRoom`), the player's floor `DamageTaken`, and `TurnsTaken`, into `RunSummary.Combats` (floor order; deepest last).
+- `ResolveDeath` computes `DeathInfo` per the caveat-4 chain: win→None; `WasAbandoned`→Abandoned (authoritative, checked first); `KilledByEncounter`→Combat; `KilledByEvent`→Event; deepest combat fought→Combat; else Unknown.
+- Aggregations over the filtered run list: `ComputeEncounterStats` (per-encounter Fights/Deaths/Σ+samples damage/tier), `ComputeTierStats` (Normal/Elite/Boss totals), `ComputeDeathCauses` (counts by resolved cause), plus a nearest-rank `Percentile` helper.
+
+**UI (`CharacterAnalyticsScreen`):**
+- **Combat by Tier** table (Fights / Deaths / Death % / Avg dmg for Normal/Elite/Boss).
+- **Deadliest Encounters** (death rate, min 3 fights — caveat 6).
+- **Most Damaging Encounters** (avg damage + p80, min 3 fights).
+- **Death Causes** (count + %, colour-coded combat/event/abandoned, "(event)" tag).
+- All respect the active filters; empty-state note for runs predating per-floor combat history.
+
+**Scope:** death-causes are flat (the `DeathInfo.Act` is captured for a future per-act split); avg-turns captured but not yet surfaced. Caveats 2/7/8 (shop buys, ancients, Elo) remain later milestones.
+
+**Files:** `Code/Analytics/CharacterAnalytics.cs` (CombatRec/DeathSource/DeathInfo/EncounterStat/TierStat/DeathCauseStat, RunSummary combat fields, ExtractCombatFacts, ResolveDeath, Compute{Encounter,Tier,DeathCause}Stats, Percentile), `Code/UI/CharacterAnalyticsScreen.cs` (combat sections).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** Combat by Tier table + deadliest/most-damaging/death-cause lists render correctly.
+
+**M11 — Relics, potions, ancients — IN PROGRESS (beta, built + installed, manual test pending)**
+
+Pick / win-rate lists for relics, potions, and ancient (Neow/elder) choices — same pattern as M9 cards, from the same cached per-run walk.
+
+**Deep parse (`CharacterAnalytics`):**
+- `ExtractInventoryFacts` records per floor: relic/potion choices (`ModelChoiceHistoryEntry.choice` + `wasPicked`), `BoughtRelics`/`BoughtPotions`, and ancient options (`AncientChoiceHistoryEntry.Title` + `WasChosen`). Chosen choices + buys feed the "owned" union; final `RunHistoryPlayer.Relics`/`Potions` snapshots complete it.
+- Generic `ComputeOwnedChoiceStats` powers `ComputeRelicStats` / `ComputePotionStats` (Offered/Picks per-occurrence; RunsWith/WinsWith de-duped per run over the owned union). `ComputeAncientStats` identifies options by `Title.LocEntryKey` (caveat 7) and shows them by localized text; RunsWith/WinsWith = runs where taken.
+
+**UI (`CharacterAnalyticsScreen`):**
+- Relics: **Most Picked** + **Highest / Lowest Win Rate** (≥3 runs).
+- Potions: **Highest / Lowest Win Rate** (≥3 runs).
+- Ancients: **Most Taken** (pick rate, ≥3 offers) + **Highest Win Rate** (≥3 taken).
+- Generic `AddPickListSection` reused across all; filter-aware; sections skipped when no data.
+
+**Scope:** caveat 7's Sea-Glass-variant normalization not special-cased (grouping by full LocEntryKey is correct, just slightly more granular). Optional gold-economy summary and per-act path-stats grid **deferred** (plan marks them optional). Caveat 2 (colored shop card buys) and caveat 8 (Elo) remain out of scope → M13.
+
+**Files:** `Code/Analytics/CharacterAnalytics.cs` (PickStat/AncientRec, RunSummary inventory fields, ExtractInventoryFacts, ComputeOwnedChoiceStats + Relic/Potion/Ancient stats), `Code/UI/CharacterAnalyticsScreen.cs` (inventory sections + AddPickListSection).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** relic/potion/ancient pick & win-rate lists render correctly.
+
+**M12 — Single-run "autopsy" — IN PROGRESS (beta, built + installed, manual test pending)**
+
+A per-run drill-in (different shape from M8–M11's cross-run aggregation): it loads one `.run` file directly and renders it floor by floor.
+
+**Screen (`Code/UI/CharacterRunAutopsyScreen.cs`, new `NSubmenu`):**
+- Opened from a new **Run Autopsy** button on the analytics header; starts on the most recent run. **◀ Older / Newer ▶** walk the character's runs (the newest-first list is handed over from the analytics screen's already-loaded aggregate — no extra disk scan; only the selected run's file is loaded).
+- **Summary** (result, ascension, run time, acts, floors, killed-by, mode, seed).
+- **HP Over Time** — the one bespoke chart: an `HpTimeline : Control` with a custom `_Draw` polyline (per-floor current HP in green, max HP faint), redrawn on resize, guarded for sparse data. This is the M12 stretch piece the plan flagged; no reference mod attempted it in-engine.
+- **Ancients Taken**, **Boss Fights** (damage bars), and a per-act **floor event log** (room name colour-coded by type, a compact "−HP · +gold · took/removed/upgraded cards · relics · potions" summary, and HP at each floor).
+- Reuses `NameResolver` for ids and the `UiTheme` section/bar primitives; player matched by `RunHistoryPlayer.Id` with single-player fallback. `RunSummary.HistoryName` added so a run can be reloaded.
+
+**Scope:** event log is read-only and textual (per plan); the HP line is the only custom-drawn element. Selecting an arbitrary run is via Prev/Next rather than a full picker list (sufficient; a searchable picker can come later).
+
+**Files:** `Code/UI/CharacterRunAutopsyScreen.cs` (new), `Code/UI/CharacterAnalyticsScreen.cs` (Run Autopsy button + OpenAutopsy), `Code/Analytics/CharacterAnalytics.cs` (RunSummary.HistoryName).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Verified in-game:** autopsy summary / ancients / boss damage / floor log render; HP chart rebuilt as a container+ColorRect gradient column chart (custom `_Draw`/`_Process`/`Line2D` would not render in this load path — see CLAUDE.md gotcha).
+
+**M13 (optional/advanced) — IN PROGRESS — exporter extension done (beta, built + installed)**
+
+First slice of M13: the M5 JSON/CSV exporter now includes every M8–M12 aggregate.
+
+**`StatsExporter`:**
+- **JSON** gains `cards`, `encounters`, `combatTiers`, `deathCauses`, `relics`, `potions`, `ancients`, plus `floorReachedDistribution` and `winRateWindows` under `runHistoryAggregate`. Rates serialise as null when there were no samples.
+- **CSV**: alongside the existing per-run `{stem}.csv`, writes per-aggregate files `{stem}_cards.csv`, `_encounters.csv`, `_relics.csv`, `_potions.csv`, `_ancients.csv`, `_deaths.csv` (each only when it has rows). `ExportResult.Files` lists everything written; the screen's status line now reports the file count.
+- All aggregates come from the same `CharacterAnalytics` methods the screen uses, over the full unfiltered run set; cards are exported base-collapsed (upgradeAware=false).
+
+**Still open in M13:** card & ancient Elo (opt-in, relic-dependent grouping — caveat 8); filter-by-individual-card/ancient-pick; surfacing `progress.save` progression (unlocks/achievements). All independent follow-ups.
+
+**Files:** `Code/Analytics/StatsExporter.cs` (JSON sections + per-aggregate CSV writers), `Code/UI/CharacterAnalyticsScreen.cs` (export status message).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending** (export writes files; non-visual).
+
+**M14 — Analytics UI polish (density + bars) — beta, built + installed, manual test pending**
+
+A presentation pass on `CharacterAnalyticsScreen` / `UiTheme` after the data work of M8–M13: tighter layout, aligned bars, and a filter-correct summary. No analytics math changed.
+
+**Summary panel is tab-aware:** the "Summary (Standard runs)" card is sourced from `CharacterStats` (the game's official, Standard-only lifetime tallies) and is independent of the run-history filter, so it was rendering unchanged on Custom/Daily where its numbers don't correspond to the runs shown. It's now gated by a `showSummary` flag (`_currentFilter` is `All` or `Standard`) at both call sites (normal path + the load-failed fallback); Custom/Daily now lead with the run-history-derived sections.
+
+**Rounded bar fill (`UiTheme.MakeBarTrack`):** the fill was `ColorRect` segments inside a `ClipContents` rounded `PanelContainer`, but Godot's `ClipContents` clips to the rectangle, not the corner radius — so the colour poked square corners out of the pill groove. Each segment is now a `Panel` + `StyleBoxFlat` that rounds only its **outer** corners: left end always rounds into the groove, right end rounds only when the bar is 100% full (`!hasEmpty`); interior segment joins stay square. Tracks `firstFilled`/`lastFilled` over the segment array; radii clamp on tiny fills.
+
+**Aligned ranked rows (`UiTheme.MakeRankedRow`):** was an expanding name + a right-anchored fixed-width bar (`ShrinkEnd`), so the bar column drifted with value-text length and left a dead gap after short names. Now a fixed name column (`Fill`, no Expand, `ClipText`, full name in `TooltipText`) + an **expand-fill** bar + a wider fixed value column (96 → 108 so strings like `0% taken (0/38)` no longer overflow and shove the bar). Name, bar start, bar end, and value line up across every row and section.
+
+**Two-column card layout:** the single full-width `VBoxContainer` (the "too much empty space" complaint) is replaced by two balanced columns inside a vertical-only `ScrollContainer` (`HorizontalScrollMode = Disabled`). `_contentContainer` now hosts one child — a two-column `HBoxContainer` rebuilt each refresh by `BeginColumns()`. `AddSection(panel)` greedily appends each section to the shorter column using `EstimateSectionWeight` (header constant + recursive `CountLeafRows` proxy); the 16 `_contentContainer!.AddChild(panel)` sites now route through it. Stat grids (Summary / Custom / Run Details) drop from 2 columns to 1 to fit the narrower cards.
+
+**Scope / trade-offs:** column balance is by estimated row count, so left/right order doesn't track top-to-bottom reading order (acceptable for a dashboard). Long encounter names truncate with a hover tooltip rather than widening the name column. Text/empty-state sections also flow through the balancer (sit in the shorter column).
+
+**Files:** `Code/UI/UiTheme.cs` (MakeBarTrack rounded segments, MakeRankedRow alignment), `Code/UI/CharacterAnalyticsScreen.cs` (showSummary gate, BeginColumns/AddSection/EstimateSectionWeight/CountLeafRows, scroll config, 1-column stat grids).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid, `install_mod` deployed. **Manual in-game test pending** — verify on a character's Analytics screen: rounded fills, row alignment, two-column density, and that Summary hides on Custom/Daily. (Restart the game — code hot-reload can `BadImageFormatException` per CLAUDE.md.)
+
 ## Release History
 
 ### v0.3.1 (2026-06-18) — Game v0.107.1 compatibility
@@ -184,6 +320,22 @@ First public release of the M7 random-character pool, with multiplayer support a
 **Verification:** Build clean, `check_mod_compatibility` 0 issues. **Verified in-game:** in-select-hidden characters are absent from the select strip, the Random Pool panel, and the random draw (including the all-unchecked fallback).
 
 **Distribution:** Released to all 3 channels — GitHub `v0.5.0` (merged `beta` → `main`), Nexus via CI auto-fire, Steam Workshop item `3747550119` (updated content, square thumbnail, tags `QoL` / `Tools & APIs` / `Utility` / `English`)
+
+### v0.6.0 (2026-06-26) — Analytics deep-dive + single-run autopsy + UI polish
+
+Ships the entire analytics suite built on `beta` since v0.5.0 (M8–M13) plus the M14 presentation pass — the largest content jump since v0.1.0.
+
+**Per-character analytics (M8–M11):** win-rate windows (last 10/50/100/all decisive runs); card pick & win-rate lists (Most Picked, Highest/Lowest Win Rate, Most Avoided) with an Upgrades On/Off toggle; relic, potion, and ancient (Neow/elder) pick & win-rate lists; encounter analytics (Deadliest, Most Damaging), Combat-by-Tier table, and Death Causes; act/floor distributions. Composite filtering by game-mode + minimum ascension + recent-N window.
+
+**Single-run autopsy (M12):** a per-run drill-in opened from the analytics header — run summary, HP-over-time column chart, ancients taken, boss-fight damage, and a per-act floor event log; ◀ Older / Newer ▶ walk the character's runs.
+
+**Export (M13):** the JSON/CSV export now includes every aggregate (cards, encounters, combat tiers, death causes, relics, potions, ancients, floor distribution, win-rate windows) with per-aggregate CSV files.
+
+**UI polish (M14):** Summary card now hides on Custom/Daily (it's official Standard-only data); bar fills follow their rounded pill groove; ranked rows align on a fixed name column + expand-fill bar + fixed value column; sections lay out in two balanced columns for density.
+
+**Scope:** card/ancient Elo and filter-by-individual-pick remain open follow-ups (tracked under M13). `min_game_version` unchanged at `0.107.1`.
+
+**Distribution:** GitHub `v0.6.0` (merged `beta` → `main`), Nexus via CI auto-fire, Steam Workshop item `3747550119`.
 
 ## M1 — Character Manager submenu (anchor)
 

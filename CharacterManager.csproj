@@ -29,6 +29,14 @@
     <PathMap>$(AppOutputBase)=.</PathMap>
   </PropertyGroup>
 
+  <!-- references/ holds gitignored clones of other stats mods, studied for the analytics plan only.
+       They are not part of this mod and must never be compiled (their types collide). -->
+  <ItemGroup>
+    <Compile Remove="references/**/*.cs" />
+    <EmbeddedResource Remove="references/**/*" />
+    <None Remove="references/**/*" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="GodotSharp" Version="4.4.0" />
     <PackageReference Include="Lib.Harmony" Version="2.4.2" />
