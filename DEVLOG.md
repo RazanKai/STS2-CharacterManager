@@ -227,6 +227,24 @@ First slice of M13: the M5 JSON/CSV exporter now includes every M8–M12 aggrega
 
 **Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid. **Manual in-game test pending** (export writes files; non-visual).
 
+**M14 — Analytics UI polish (density + bars) — beta, built + installed, manual test pending**
+
+A presentation pass on `CharacterAnalyticsScreen` / `UiTheme` after the data work of M8–M13: tighter layout, aligned bars, and a filter-correct summary. No analytics math changed.
+
+**Summary panel is tab-aware:** the "Summary (Standard runs)" card is sourced from `CharacterStats` (the game's official, Standard-only lifetime tallies) and is independent of the run-history filter, so it was rendering unchanged on Custom/Daily where its numbers don't correspond to the runs shown. It's now gated by a `showSummary` flag (`_currentFilter` is `All` or `Standard`) at both call sites (normal path + the load-failed fallback); Custom/Daily now lead with the run-history-derived sections.
+
+**Rounded bar fill (`UiTheme.MakeBarTrack`):** the fill was `ColorRect` segments inside a `ClipContents` rounded `PanelContainer`, but Godot's `ClipContents` clips to the rectangle, not the corner radius — so the colour poked square corners out of the pill groove. Each segment is now a `Panel` + `StyleBoxFlat` that rounds only its **outer** corners: left end always rounds into the groove, right end rounds only when the bar is 100% full (`!hasEmpty`); interior segment joins stay square. Tracks `firstFilled`/`lastFilled` over the segment array; radii clamp on tiny fills.
+
+**Aligned ranked rows (`UiTheme.MakeRankedRow`):** was an expanding name + a right-anchored fixed-width bar (`ShrinkEnd`), so the bar column drifted with value-text length and left a dead gap after short names. Now a fixed name column (`Fill`, no Expand, `ClipText`, full name in `TooltipText`) + an **expand-fill** bar + a wider fixed value column (96 → 108 so strings like `0% taken (0/38)` no longer overflow and shove the bar). Name, bar start, bar end, and value line up across every row and section.
+
+**Two-column card layout:** the single full-width `VBoxContainer` (the "too much empty space" complaint) is replaced by two balanced columns inside a vertical-only `ScrollContainer` (`HorizontalScrollMode = Disabled`). `_contentContainer` now hosts one child — a two-column `HBoxContainer` rebuilt each refresh by `BeginColumns()`. `AddSection(panel)` greedily appends each section to the shorter column using `EstimateSectionWeight` (header constant + recursive `CountLeafRows` proxy); the 16 `_contentContainer!.AddChild(panel)` sites now route through it. Stat grids (Summary / Custom / Run Details) drop from 2 columns to 1 to fit the narrower cards.
+
+**Scope / trade-offs:** column balance is by estimated row count, so left/right order doesn't track top-to-bottom reading order (acceptable for a dashboard). Long encounter names truncate with a hover tooltip rather than widening the name column. Text/empty-state sections also flow through the balancer (sit in the shorter column).
+
+**Files:** `Code/UI/UiTheme.cs` (MakeBarTrack rounded segments, MakeRankedRow alignment), `Code/UI/CharacterAnalyticsScreen.cs` (showSummary gate, BeginColumns/AddSection/EstimateSectionWeight/CountLeafRows, scroll config, 1-column stat grids).
+
+**Verification:** `build_mod` clean (0 errors; 3 pre-existing warnings), `validate_mod` valid, `install_mod` deployed. **Manual in-game test pending** — verify on a character's Analytics screen: rounded fills, row alignment, two-column density, and that Summary hides on Custom/Daily. (Restart the game — code hot-reload can `BadImageFormatException` per CLAUDE.md.)
+
 ## Release History
 
 ### v0.3.1 (2026-06-18) — Game v0.107.1 compatibility

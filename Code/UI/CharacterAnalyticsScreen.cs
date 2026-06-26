@@ -40,6 +40,11 @@ namespace CharacterManager.UI
         private Label? _subtitleLabel;
         private Label? _statusLabel;
         private VBoxContainer? _contentContainer;
+        // Two balanced columns the section panels are distributed across (rebuilt each refresh).
+        private VBoxContainer? _colLeft;
+        private VBoxContainer? _colRight;
+        private float _leftWeight;
+        private float _rightWeight;
 
         private CharacterAnalytics? _fullAgg;         // loaded once per open (via AnalyticsCache)
         private GameModeFilter _currentFilter = GameModeFilter.All;
@@ -146,12 +151,17 @@ namespace CharacterManager.UI
             BuildFilterBar(filterY);
 
             float scrollY = filterY + 34f;
-            var scroll = new ScrollContainer();
+            var scroll = new ScrollContainer
+            {
+                // Vertical-only: the content is forced to the column width and laid out in two columns.
+                HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            };
             UiTheme.PlaceColumnStretch(scroll, scrollY, UiTheme.PaddingTop);
             AddChild(scroll);
 
+            // Host that we clear+rebuild on every refresh. It holds a single child: the two-column row
+            // (built in BeginColumns), so sections can be balanced across a left and right column.
             _contentContainer = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            _contentContainer.AddThemeConstantOverride("separation", 10);
             scroll.AddChild(_contentContainer);
         }
 
@@ -250,8 +260,7 @@ namespace CharacterManager.UI
         private void UpdateDisplay()
         {
             if (_contentContainer == null) return;
-            foreach (Node child in _contentContainer.GetChildren())
-                child.QueueFree();
+            BeginColumns();
 
             var c = _character;
             if (c == null) return;
@@ -259,11 +268,17 @@ namespace CharacterManager.UI
             var stats = GetStats(c);
             var full = _fullAgg;
 
+            // The Summary panel is sourced from CharacterStats (the game's official, Standard-only
+            // lifetime tallies), so it's only meaningful on the All and Standard tabs. Hide it on
+            // Custom/Daily, where those numbers don't correspond to the runs being shown.
+            bool showSummary = _currentFilter == GameModeFilter.All
+                            || _currentFilter == GameModeFilter.Standard;
+
             if (full != null && full.LoadFailed)
             {
                 AddTextSection("Run History",
                     "Couldn't read run history yet (the save system may still be loading). Re-open this screen to retry.");
-                if (stats != null) AddSummarySection(stats);
+                if (stats != null && showSummary) AddSummarySection(stats);
                 return;
             }
 
@@ -274,8 +289,9 @@ namespace CharacterManager.UI
                 return;
             }
 
-            // Official, Standard-only lifetime summary (CharacterStats) — independent of the filters.
-            if (stats != null)
+            // Official, Standard-only lifetime summary (CharacterStats) — shown only on the
+            // All/Standard tabs (see showSummary above); hidden on Custom/Daily.
+            if (stats != null && showSummary)
                 AddSummarySection(stats);
 
             // Win-rate moving windows: scoped by game-mode + ascension, but NOT by the recent-N cap
@@ -355,8 +371,7 @@ namespace CharacterManager.UI
             // Paint a placeholder first, then defer the parse one frame so the screen appears
             // immediately instead of stalling on disk reads (M8, plan §4a). The aggregate is read
             // through AnalyticsCache, so re-opens of the same character are instant.
-            if (_contentContainer != null)
-                foreach (Node child in _contentContainer.GetChildren()) child.QueueFree();
+            BeginColumns();
             AddTextSection("Run History", "Crunching run history…");
 
             var tree = GetTree();
@@ -402,9 +417,9 @@ namespace CharacterManager.UI
                 ("Total playtime", stats != null ? FormatDuration(stats.Playtime) : "—"),
                 ("Badges earned", stats?.Badges != null ? stats.Badges.Count.ToString() : "0"),
             };
-            AddStatsGrid(body, rows, 2);
+            AddStatsGrid(body, rows, 1);
 
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>Custom + Daily runs — recorded in run history but excluded from official stats.</summary>
@@ -431,13 +446,13 @@ namespace CharacterManager.UI
                 ("Deaths", agg.CustomDeaths.ToString()),
                 ("Abandoned", agg.CustomAbandoned.ToString()),
             };
-            AddStatsGrid(body, rows, 2);
+            AddStatsGrid(body, rows, 1);
 
             body.AddChild(UiTheme.MakeLabel(
                 "Win rate excludes abandons. These runs are not counted by the game's official stats.",
                 MutedColor, UiTheme.SmallFontSize));
 
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>Run details across recorded runs (not win/loss tallies).</summary>
@@ -458,9 +473,9 @@ namespace CharacterManager.UI
                 ("Longest run", FormatDuration(agg.MaxRunTime)),
                 ("Fastest clear", agg.FastestWin >= 0 ? FormatDuration(agg.FastestWin) : "—"),
             };
-            AddStatsGrid(body, rows, 2);
+            AddStatsGrid(body, rows, 1);
 
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>Lays label/value pairs out in <paramref name="columns"/> equal columns to fill width.</summary>
@@ -512,7 +527,7 @@ namespace CharacterManager.UI
             body.AddChild(UiTheme.MakeLabel(
                 "Win rate over the most recent decisive runs (abandons excluded).",
                 MutedColor, UiTheme.SmallFontSize));
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddFloorBars(CharacterAnalytics agg, string label)
@@ -531,7 +546,7 @@ namespace CharacterManager.UI
                 body.AddChild(UiTheme.MakeBarRow($"{f} floor{(f == 1 ? "" : "s")}", BarLabelWidth, bar,
                     $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         // ─── Card analytics (M9) ─────────────────────────────────────────────
@@ -607,7 +622,7 @@ namespace CharacterManager.UI
                 var s = list[i];
                 body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         // ─── Encounter & death analytics (M10) ───────────────────────────────
@@ -685,7 +700,7 @@ namespace CharacterManager.UI
             }
 
             body.AddChild(grid);
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddDeathCausesSection(List<DeathCauseStat> causes)
@@ -715,7 +730,7 @@ namespace CharacterManager.UI
                 string label = d.Source == DeathSource.Event ? d.Name + "  (event)" : d.Name;
                 body.AddChild(UiTheme.MakeRankedRow(label, $"{d.Count} ({pct:0.#}%)", d.Count, max, col));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         /// <summary>One capped, bar-ranked encounter list (mirrors <see cref="AddCardListSection"/>).</summary>
@@ -736,7 +751,7 @@ namespace CharacterManager.UI
                 var s = list[i];
                 body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private static string TierName(RoomType tier) => tier switch
@@ -841,7 +856,7 @@ namespace CharacterManager.UI
                 var s = list[i];
                 body.AddChild(UiTheme.MakeRankedRow(s.Name, value(s), weight(s), max, color));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddAscensionBars(CharacterAnalytics agg, string label)
@@ -858,7 +873,7 @@ namespace CharacterManager.UI
                 var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxGames - (w + l)));
                 body.AddChild(UiTheme.MakeBarRow($"Ascension {asc}", BarLabelWidth, bar, $"{w}W / {l}L", BarValueWidth));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddActBars(CharacterAnalytics agg, string label)
@@ -875,7 +890,7 @@ namespace CharacterManager.UI
                 var bar = UiTheme.MakeBarTrack(16f, segs, Math.Max(0, maxCount - count));
                 body.AddChild(UiTheme.MakeBarRow($"Reached act {act}", BarLabelWidth, bar, $"{count} run{(count == 1 ? "" : "s")}", BarValueWidth));
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         // ─── Run autopsy (M12) ───────────────────────────────────────────────
@@ -971,7 +986,7 @@ namespace CharacterManager.UI
 
                 body.AddChild(line);
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddListSection(string heading, List<string> items)
@@ -994,7 +1009,7 @@ namespace CharacterManager.UI
                     body.AddChild(lbl);
                 }
             }
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
         }
 
         private void AddTextSection(string heading, string text)
@@ -1009,7 +1024,66 @@ namespace CharacterManager.UI
             lbl.AddThemeFontSizeOverride("font_size", UiTheme.BodyFontSize);
             lbl.AddThemeColorOverride("font_color", BodyColor);
             body.AddChild(lbl);
-            _contentContainer!.AddChild(panel);
+            AddSection(panel);
+        }
+
+        // ─── Two-column distribution ─────────────────────────────────────────
+
+        /// <summary>Clears the content host and rebuilds the empty two-column row + resets the balancer.</summary>
+        private void BeginColumns()
+        {
+            if (_contentContainer == null) return;
+            foreach (Node child in _contentContainer.GetChildren()) child.QueueFree();
+
+            var cols = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            cols.AddThemeConstantOverride("separation", 16);
+            _contentContainer.AddChild(cols);
+
+            _colLeft = NewColumn();
+            _colRight = NewColumn();
+            cols.AddChild(_colLeft);
+            cols.AddChild(_colRight);
+            _leftWeight = 0f;
+            _rightWeight = 0f;
+        }
+
+        private static VBoxContainer NewColumn()
+        {
+            var col = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f };
+            col.AddThemeConstantOverride("separation", 12);
+            return col;
+        }
+
+        /// <summary>Adds a section panel to whichever column is currently shorter (greedy height balance).</summary>
+        private void AddSection(PanelContainer panel)
+        {
+            if (_colLeft == null || _colRight == null) BeginColumns();
+            if (_colLeft == null || _colRight == null) { _contentContainer!.AddChild(panel); return; }
+
+            float weight = EstimateSectionWeight(panel);
+            if (_leftWeight <= _rightWeight) { _colLeft.AddChild(panel); _leftWeight += weight; }
+            else { _colRight.AddChild(panel); _rightWeight += weight; }
+        }
+
+        /// <summary>Rough height proxy for column balancing: a base for the header + chrome plus the
+        /// number of descendant rows. Doesn't need to be exact — just enough to keep the two columns
+        /// near the same length.</summary>
+        private static float EstimateSectionWeight(Node panel)
+        {
+            return 3f + CountLeafRows(panel);
+        }
+
+        private static int CountLeafRows(Node node)
+        {
+            int n = 0;
+            foreach (Node child in node.GetChildren())
+            {
+                // Count "row-ish" leaves (bar rows, grid cells, labels) rather than every container.
+                if (child is HBoxContainer || child is Label || child is GridContainer)
+                    n += 1;
+                n += CountLeafRows(child);
+            }
+            return n;
         }
 
         private static PanelContainer MakeSectionPanel(string heading, out VBoxContainer body)
