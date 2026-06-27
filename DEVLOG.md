@@ -44,9 +44,9 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | M12 | Single-run "autopsy" | ✅ Shipped | v0.6.0 |
 | M13 | Export extension (all aggregates) | ✅ Shipped (advanced follow-ups open) | v0.6.0 |
 | M14 | Analytics UI polish (density + bars) | ✅ Shipped | v0.6.0 |
-| **M15** | **Cross-character source control (Kaleidoscope/Colorful Philosophers/…)** | 📋 Planned | — |
+| **M15** | **Cross-character source control (Kaleidoscope/Colorful Philosophers/…)** | ✅ Shipped | v0.7.0 |
 
-**Current released version: v0.6.0** (all three channels). `min_game_version 0.107.1`. M15 plan: `M15-CROSS-CHARACTER-POOL-PLAN.md`.
+**Current released version: v0.7.0** (all three channels). `min_game_version 0.107.1`. M15 plan: `M15-CROSS-CHARACTER-POOL-PLAN.md`.
 
 ---
 
@@ -159,9 +159,23 @@ Presentation pass on `CharacterAnalyticsScreen` / `UiTheme`; no analytics math c
 - **Aligned ranked rows (`MakeRankedRow`):** fixed name column (`ClipText` + tooltip) + expand-fill bar + wider fixed value column (108) so rows align across sections.
 - **Two-column card layout:** sections greedily balanced across two columns inside a vertical-only `ScrollContainer` (`BeginColumns`/`AddSection`/`EstimateSectionWeight`/`CountLeafRows`); stat grids drop to 1 column. Balance is by estimated row count (so column order doesn't track reading order — acceptable for a dashboard).
 
-### M15 — Cross-character source control (PLANNED)
+### M15 — Cross-character source control
 
-Control which characters' card/relic pools the cross-character mechanics (Kaleidoscope, Colorful Philosophers, Splash, Prismatic Gem, Orobas/SeaGlass) may draw from — the same lever-class as M7's random pool. All route through `UnlockState.CharacterCardPools` (= `Characters.Select(c => c.CardPool)`); Orobas reads `Characters` directly. Recommended approach: a `CrossSourceStore` + shared filter applied per-consumer (not a global choke-point postfix, which would also shrink `CardPools`/`Cards`). Full analysis, patch tactics, caveats (loc keys, appearance gates, never-empty fallback) and verification plan in **`M15-CROSS-CHARACTER-POOL-PLAN.md`**.
+Control which characters' card/relic pools the cross-character mechanics (Kaleidoscope, Colorful Philosophers, Splash, Prismatic Gem, Orobas/SeaGlass) may draw from — the same lever-class as M7's random pool. All route through `UnlockState.CharacterCardPools` (= `Characters.Select(c => c.CardPool)`); Orobas reads `Characters` directly.
+
+**Approach.** A `CrossSourceStore` (per-character eligibility, default on, persisted to `charactermanager_crosssource.json`, independent of the In-Select and Random-Pool stores) plus a shared `CrossSourceFilter` applied per-consumer via one transpiler each — never a global choke-point postfix, which would also shrink `CardPools`/`Cards` everywhere. `CrossSourceFilter` maps pools back to characters by `CardPool` identity and **never returns an empty set** (falls back to the vanilla roster), so consumers that assume ≥1 source never crash.
+
+**Five transpiler patches**, each swapping the `UnlockState.CharacterCardPools`/`Characters` getter call inside one method for the filtered equivalent:
+- `ColorfulPhilosophers.GenerateInitialOptions` (sync), `PrismaticGem.ModifyCardRewardCreationOptions` (sync), `Orobas.GenerateInitialOptions` (sync — only the single `Characters` pick; the broader `SeaGlassOptions` list iterates `ModelDb.AllCharacters` directly and is left vanilla).
+- `Kaleidoscope.AfterObtained` and `Splash.OnPlay` are **`async`** — the getter call lives in the compiler-generated state machine, so these target `AccessTools.AsyncMoveNext(...)`, not the kickoff stub. (Targeting the stub matched 0 getter calls and silently no-op'd — the bug fixed in v0.7.0.)
+
+Appearance/eligibility gates (`Kaleidoscope.IsAllowedAtNeow`, `ColorfulPhilosophers.IsAllowed`) read the **unfiltered** count and are intentionally left alone: filtering changes what's *offered*, never whether the relic/event can *appear*. Multiplayer needs no sync — each peer filters from its own `UnlockState` identically.
+
+**UI.** A "Lend Cards" column in the Character Manager (per-character toggle, hover tooltip). Base characters are eligible by default and toggleable.
+
+**Base-character select management (v0.7.0).** The In-Select toggle was extended to base characters (previously custom-only): `CharacterSelectPatch.IsDisabled` no longer exempts base chars, and the `AllCharacters` getter postfix now hides disabled base chars during button construction. A safety guard keeps the full roster if *every* character would be disabled, so the select screen can never be empty.
+
+Full pre-implementation analysis in **`M15-CROSS-CHARACTER-POOL-PLAN.md`**.
 
 ---
 
@@ -195,6 +209,13 @@ Control which characters' card/relic pools the cross-character mechanics (Kaleid
 ---
 
 ## Release History
+
+### v0.7.0 (2026-06-27) — Cross-character source control (M15)
+Per-character "Lend Cards" control over which characters' pools the cross-character mechanics (Kaleidoscope, Colorful Philosophers, Splash, Prismatic Gem, Orobas/SeaGlass) may draw from, via five per-consumer transpilers + a never-empty `CrossSourceFilter`.
+- **Fix:** the Kaleidoscope and Splash patches targeted the `async` method stub instead of its state machine, so they matched 0 getter calls and silently no-op'd. Both now target `AccessTools.AsyncMoveNext(...)`.
+- Base characters gained the In-Select toggle (hide from select/custom-run screens), with a guard that never lets the roster be emptied, plus the new Lend Cards toggle.
+- Hover tooltips on the Stats / In Select / Lend Cards columns (hard-wrapped — the native Godot tooltip doesn't word-wrap).
+- **Distribution:** GitHub `v0.7.0` (`beta`→`main`), Nexus via CI auto-fire, Steam Workshop `3747550119`. `min_game_version` unchanged.
 
 ### v0.6.0 (2026-06-26) — Analytics deep-dive + autopsy + UI polish
 The largest content jump since v0.1.0: the entire analytics suite (M8–M13) plus the M14 presentation pass.

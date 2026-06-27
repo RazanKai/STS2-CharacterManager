@@ -9,13 +9,19 @@ using MegaCrit.Sts2.Core.Unlocks;
 
 namespace CharacterManager.Patches
 {
-    [HarmonyPatch(typeof(Splash), "OnPlay")]
+    [HarmonyPatch]
     internal static class CrossSourceSplashPatch
     {
         // Target: the call to Owner.UnlockState.CharacterCardPools.ToList() inside OnPlay.
         // We replace the load of Owner.UnlockState.CharacterCardPools with a call to CrossSourceFilter.PoolsFor.
         // The method already removes own pool and needs ≥1 attack source; our filter's fallback to vanilla
         // ensures it never gets an empty set.
+        //
+        // OnPlay is an `async Task`: its body (incl. the CharacterCardPools getter call) compiles into a
+        // generated state-machine MoveNext, NOT the OnPlay stub. Transpiling the stub would match 0 getter
+        // calls and silently no-op, so we retarget the MoveNext via AsyncMoveNext.
+        static MethodBase TargetMethod() => AccessTools.AsyncMoveNext(
+            AccessTools.Method(typeof(Splash), "OnPlay"));
 
         private static readonly MethodInfo TargetGetter = AccessTools.PropertyGetter(
             typeof(MegaCrit.Sts2.Core.Unlocks.UnlockState), nameof(MegaCrit.Sts2.Core.Unlocks.UnlockState.CharacterCardPools));

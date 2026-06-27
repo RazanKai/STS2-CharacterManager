@@ -9,7 +9,7 @@ using MegaCrit.Sts2.Core.Unlocks;
 
 namespace CharacterManager.Patches
 {
-    [HarmonyPatch(typeof(Kaleidoscope), "AfterObtained")]
+    [HarmonyPatch]
     internal static class CrossSourceKaleidoscopePatch
     {
         // Target: the call to Owner.UnlockState.CharacterCardPools.Where(...) inside AfterObtained.
@@ -18,8 +18,11 @@ namespace CharacterManager.Patches
         // so the relic's Neow eligibility gate uses the vanilla (unfiltered) count. This means filtering only
         // affects what the relic OFFERS once obtained, not whether it CAN appear at Neow.
         //
-        // AfterObtained is an async method with a for-loop that accesses CharacterCardPools each iteration.
-        // The transpiler must replace ALL calls to the getter (not just one) since the loop runs multiple times.
+        // AfterObtained is an `async Task`: its body (incl. the CharacterCardPools getter call inside the
+        // for-loop) compiles into a generated state-machine MoveNext, NOT the AfterObtained stub. Transpiling
+        // the stub would match 0 getter calls and silently no-op, so we retarget the MoveNext via AsyncMoveNext.
+        static MethodBase TargetMethod() => AccessTools.AsyncMoveNext(
+            AccessTools.Method(typeof(Kaleidoscope), nameof(Kaleidoscope.AfterObtained)));
 
         private static readonly MethodInfo TargetGetter = AccessTools.PropertyGetter(
             typeof(MegaCrit.Sts2.Core.Unlocks.UnlockState), nameof(MegaCrit.Sts2.Core.Unlocks.UnlockState.CharacterCardPools));
