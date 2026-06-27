@@ -3,7 +3,7 @@
   "name": "Character Manager",
   "author": "RazanKai",
   "description": "Roster management for all characters: visibility, ordering, enable/disable in character select, per-character info cards, run-history filtering by character, per-character analytics, and a configurable random-character pool.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "has_pck": false,
   "has_dll": true,
   "affects_gameplay": true,

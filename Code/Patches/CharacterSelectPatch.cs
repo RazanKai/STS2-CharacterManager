@@ -41,7 +41,8 @@ namespace CharacterManager.Patches
     ///
     /// <para>The filter is scoped tightly to button construction, so the global
     /// <c>ModelDb.AllCharacters</c> (card pools, stats, run setup, etc.) is unchanged everywhere
-    /// else. Base-game characters are never affected. NOTE: a custom character only appears in
+    /// else. Base-game characters CAN now be hidden too (the manager exposes the In-Select toggle for
+    /// them); a safety guard never lets the select roster be emptied. NOTE: a custom character only appears in
     /// select because its own mod/library patches the getter to add it — we only remove what is
     /// already there; we never add characters.</para>
     /// </summary>
@@ -108,17 +109,26 @@ namespace CharacterManager.Patches
 
             var list = __result.ToList();
             int before = list.Count;
-            list.RemoveAll(IsDisabledCustom);
+            list.RemoveAll(IsDisabled);
+            // Safety: never empty the select roster. If every character in this enumeration is
+            // disabled, keep the original set so the player can still start (and re-enable from the
+            // manager). Base characters now go through this path too, so this guard matters.
+            if (list.Count == 0 && before > 0)
+            {
+                Log.Warn("[CharacterManager] character-select: all characters disabled; keeping full roster so select isn't empty.");
+                return;
+            }
             if (list.Count != before)
-                Log.Info($"[CharacterManager] character-select: hid {before - list.Count} disabled custom character(s).");
+                Log.Info($"[CharacterManager] character-select: hid {before - list.Count} disabled character(s).");
             __result = list;
         }
 
-        private static bool IsDisabledCustom(CharacterModel c)
+        // A character is disabled when the player has turned its In-Select toggle off. Applies to
+        // base and custom characters alike (base used to be exempt; the manager now exposes the
+        // toggle for them too).
+        private static bool IsDisabled(CharacterModel c)
         {
-            return c != null
-                && !CharacterHelper.IsBaseCharacter(c.Id)
-                && !EnabledStore.IsEnabled(c.Id);
+            return c != null && !EnabledStore.IsEnabled(c.Id);
         }
 
         // ─── Remove disabled-custom buttons that bypass the AllCharacters roster ───
@@ -186,7 +196,7 @@ namespace CharacterManager.Patches
             if (node == null || depth > 8) return;
             if (node is NCharacterSelectButton btn)
             {
-                if (ButtonCharacterProp?.GetValue(btn) is CharacterModel cm && IsDisabledCustom(cm))
+                if (ButtonCharacterProp?.GetValue(btn) is CharacterModel cm && IsDisabled(cm))
                     sink.Add(btn);
                 return; // buttons don't nest characters; no need to recurse into one
             }

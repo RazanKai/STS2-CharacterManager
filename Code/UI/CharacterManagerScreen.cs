@@ -36,6 +36,24 @@ namespace CharacterManager.UI
         // Compact card height: image + (name + W/L + two button rows + separations + margins).
         private const float DetailPanelHeight = DetailImageHeight + 215f;
 
+        // Column hover tooltips. The native Godot tooltip does not word-wrap, so these are
+        // hard-wrapped with newlines to keep each line a sensible width.
+        private const string StatsTooltip =
+            "Show this character's win/loss stats in the\n" +
+            "in-game Compendium stats grid.";
+        private const string InSelectTooltip =
+            "Show this character on the Character Select\n" +
+            "and Custom Run screens. Turn off to hide it\n" +
+            "from those screens (it stays installed).\n" +
+            "The roster can never be fully emptied.";
+        private const string LendCardsTooltip =
+            "Allow other characters' cross-pool effects —\n" +
+            "Kaleidoscope, Colorful Philosophers, Splash,\n" +
+            "Prismatic Gem, and Orobas/SeaGlass — to draw\n" +
+            "cards and relics from this character's pool.\n" +
+            "Turn off to exclude this character's pool as\n" +
+            "a source for those effects.";
+
         private VBoxContainer? _rowContainer;
         private VBoxContainer? _detailContent;       // right panel, rebuilt per selection
         private readonly List<RowVisual> _rows = new();
@@ -88,8 +106,9 @@ namespace CharacterManager.UI
             var colHbox = MakeHbox(colPanel, 10);
             colHbox.AddChild(new Control { CustomMinimumSize = new Vector2(PortraitSize, 0f) });
             AddColLabel(colHbox, "Character", SizeFlags.ExpandFill);
-            AddColLabel(colHbox, "Stats", SizeFlags.ShrinkCenter, ColWidth);
-            AddColLabel(colHbox, "In Select", SizeFlags.ShrinkCenter, ColWidth);
+            AddColLabel(colHbox, "Stats", SizeFlags.ShrinkCenter, ColWidth, StatsTooltip);
+            AddColLabel(colHbox, "In Select", SizeFlags.ShrinkCenter, ColWidth, InSelectTooltip);
+            AddColLabel(colHbox, "Lend Cards", SizeFlags.ShrinkCenter, ColWidth, LendCardsTooltip);
 
             // ── Left list: scrollable rows ──
             float scrollY = colY + ColRowHeight + 4f;
@@ -189,12 +208,17 @@ namespace CharacterManager.UI
             else
                 hbox.AddChild(MakeFixedLabel("Always", UiTheme.Muted, ColWidth));
 
-            // In-select toggle (custom only)
-            if (isCustom)
-                hbox.AddChild(MakeToggle(EnabledStore.IsEnabled(character.Id),
-                    v => EnabledStore.Toggle(character.Id)));
-            else
-                hbox.AddChild(MakeFixedLabel("—", UiTheme.Muted, ColWidth));
+            // In-select toggle (base + custom: any character can be hidden from the select screens).
+            var inSelectToggle = MakeToggle(EnabledStore.IsEnabled(character.Id),
+                v => EnabledStore.Toggle(character.Id));
+            inSelectToggle.TooltipText = InSelectTooltip;
+            hbox.AddChild(inSelectToggle);
+
+            // Cross-source toggle (base + custom: any character's pool can be excluded as a cross-source).
+            var lendToggle = MakeToggle(CrossSourceStore.IsEligible(character.Id),
+                v => CrossSourceStore.Toggle(character.Id));
+            lendToggle.TooltipText = LendCardsTooltip;
+            hbox.AddChild(lendToggle);
 
             _rows.Add(new RowVisual(character, panel, normal, selected));
             return panel;
@@ -541,13 +565,19 @@ namespace CharacterManager.UI
             return hbox;
         }
 
-        private static void AddColLabel(HBoxContainer parent, string text, SizeFlags horizontal, float minWidth = 0f)
+        private static void AddColLabel(HBoxContainer parent, string text, SizeFlags horizontal, float minWidth = 0f, string? tooltip = null)
         {
             var lbl = UiTheme.MakeLabel(text, UiTheme.Muted, UiTheme.SmallFontSize,
                 horizontal == SizeFlags.ExpandFill ? HorizontalAlignment.Left : HorizontalAlignment.Center);
             lbl.SizeFlagsHorizontal = horizontal;
             lbl.SizeFlagsVertical = SizeFlags.ShrinkCenter;
             if (minWidth > 0f) lbl.CustomMinimumSize = new Vector2(minWidth, 0f);
+            if (!string.IsNullOrEmpty(tooltip))
+            {
+                lbl.TooltipText = tooltip;
+                // Labels default to MouseFilter.Ignore, which suppresses hover — needed for the tooltip.
+                lbl.MouseFilter = MouseFilterEnum.Stop;
+            }
             parent.AddChild(lbl);
         }
 
