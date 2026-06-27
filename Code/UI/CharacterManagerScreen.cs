@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using CharacterManager.Analytics;
 using CharacterManager.Config;
 using Godot;
 using HarmonyLib;
@@ -31,6 +32,8 @@ namespace CharacterManager.UI
     {
         private const float ColRowHeight = 34f;
         private const float ColWidth = 92f;
+        private const float WinRateColWidth = 156f;   // M16: win-rate % + recent-results tick strip
+        private const int SparkTicks = 20;            // most-recent decisive runs shown in the strip
         private const float PortraitSize = 38f;
         private const float DetailImageHeight = 360f;
         // Compact card height: image + (name + W/L + two button rows + separations + margins).
@@ -38,6 +41,11 @@ namespace CharacterManager.UI
 
         // Column hover tooltips. The native Godot tooltip does not word-wrap, so these are
         // hard-wrapped with newlines to keep each line a sensible width.
+        private const string WinRateTooltip =
+            "Win rate and recent results across all run\n" +
+            "history (every game mode). Each tick is one\n" +
+            "run — green win, red loss, grey abandoned —\n" +
+            "newest on the right.";
         private const string StatsTooltip =
             "Show this character's win/loss stats in the\n" +
             "in-game Compendium stats grid.";
@@ -59,8 +67,24 @@ namespace CharacterManager.UI
         private readonly List<RowVisual> _rows = new();
         private CharacterModel? _selected;
 
+        // How abandoned runs are treated in the Win Rate column (cycled by clicking the header):
+        //  Hidden  — excluded from both the strip and the %  (default)
+        //  Shown   — shown as grey ticks in the strip, but NOT counted in the %
+        //  Counted — shown as grey ticks AND counted as losses in the %
+        private enum AbandonMode { Hidden, Shown, Counted }
+        private Button? _winRateHeaderBtn;           // clickable header cycling the mode below
+        private AbandonMode _abandonMode = AbandonMode.Hidden;
+
+        // Detail-panel W/L scope (cycled by clicking the W/L line):
+        //  Official     — the game's Standard-only ranked tallies (excludes Custom/Daily)
+        //  AllDecisive  — wins + losses across every mode (abandons excluded)
+        //  AllRuns      — every mode including abandoned (shown as a separate A count)
+        private enum WlScope { Official, AllDecisive, AllRuns }
+        private WlScope _wlScope = WlScope.Official;
+
         private CharacterInfoScreen? _infoScreen;       // reused M2 drill-in
         private CharacterAnalyticsScreen? _analyticsScreen; // reused M4 drill-in
+        private CharacterHelpScreen? _helpScreen;       // reused M16 features/help drill-in
 
         protected override Control? InitialFocusedControl => null;
 
@@ -97,6 +121,18 @@ namespace CharacterManager.UI
             backBtn.Pressed += () => _stack?.Pop();
             AddChild(backBtn);
 
+            // "?" Help button, just left of Back — opens the features/how-it-works screen (M16).
+            var helpBtn = UiTheme.MakeButton("?", UiTheme.Title, 44f);
+            helpBtn.TooltipText = "How this screen works — features & toggles explained.";
+            float half = UiTheme.MaxContentWidth / 2f;
+            helpBtn.AnchorLeft = 0.5f; helpBtn.AnchorRight = 0.5f;
+            helpBtn.AnchorTop = 0f; helpBtn.AnchorBottom = 0f;
+            helpBtn.OffsetRight = half - 132f;        // 120 (Back) + 12 gap
+            helpBtn.OffsetLeft = half - 132f - 44f;
+            helpBtn.OffsetTop = top; helpBtn.OffsetBottom = top + UiTheme.HeaderHeight;
+            helpBtn.Pressed += OpenHelp;
+            AddChild(helpBtn);
+
             // ── Left list: column header ──
             float colY = top + UiTheme.HeaderHeight + 8f;
             var colPanel = UiTheme.MakePanel(UiTheme.PanelBg, border: false);
@@ -106,6 +142,18 @@ namespace CharacterManager.UI
             var colHbox = MakeHbox(colPanel, 10);
             colHbox.AddChild(new Control { CustomMinimumSize = new Vector2(PortraitSize, 0f) });
             AddColLabel(colHbox, "Character", SizeFlags.ExpandFill);
+
+            // Win Rate is a clickable header (M16): cycles how abandoned runs are treated. FocusMode
+            // None so it never stays "selected" after a click (Godot keeps focus otherwise, which
+            // both sticks until another control is clicked and overrides our state colour with white).
+            _winRateHeaderBtn = UiTheme.MakeButton("Win Rate", UiTheme.Muted, WinRateColWidth);
+            _winRateHeaderBtn.AddThemeFontSizeOverride("font_size", UiTheme.SmallFontSize);
+            _winRateHeaderBtn.SizeFlagsHorizontal = SizeFlags.ShrinkCenter;
+            _winRateHeaderBtn.FocusMode = FocusModeEnum.None;
+            _winRateHeaderBtn.Pressed += CycleAbandonMode;
+            colHbox.AddChild(_winRateHeaderBtn);
+            UpdateWinRateHeader();
+
             AddColLabel(colHbox, "Stats", SizeFlags.ShrinkCenter, ColWidth, StatsTooltip);
             AddColLabel(colHbox, "In Select", SizeFlags.ShrinkCenter, ColWidth, InSelectTooltip);
             AddColLabel(colHbox, "Lend Cards", SizeFlags.ShrinkCenter, ColWidth, LendCardsTooltip);
@@ -201,6 +249,13 @@ namespace CharacterManager.UI
             nameCol.AddChild(srcLbl);
             hbox.AddChild(nameCol);
 
+            // Win-rate sparkline: % + recent-results tick strip (M16). One shared history pass
+            // (RosterWinHistory) fills every row, so this is cheap even for a long roster. The holder
+            // is rebuilt in place when the Win Rate header toggles abandoned-run visibility.
+            var sparkHolder = MakeSparkHolder();
+            RebuildSparkline(sparkHolder, RosterWinHistory.Get(character.Id));
+            hbox.AddChild(sparkHolder);
+
             // Stats-shown toggle (custom only; base always shown)
             if (isCustom)
                 hbox.AddChild(MakeToggle(VisibilityStore.IsVisible(character.Id),
@@ -209,18 +264,16 @@ namespace CharacterManager.UI
                 hbox.AddChild(MakeFixedLabel("Always", UiTheme.Muted, ColWidth));
 
             // In-select toggle (base + custom: any character can be hidden from the select screens).
-            var inSelectToggle = MakeToggle(EnabledStore.IsEnabled(character.Id),
-                v => EnabledStore.Toggle(character.Id));
-            inSelectToggle.TooltipText = InSelectTooltip;
-            hbox.AddChild(inSelectToggle);
+            // Tooltips now live on the column headers + the ? Help screen (M16), not every button.
+            hbox.AddChild(MakeToggle(EnabledStore.IsEnabled(character.Id),
+                v => EnabledStore.Toggle(character.Id)));
 
             // Cross-source toggle (base + custom: any character's pool can be excluded as a cross-source).
-            var lendToggle = MakeToggle(CrossSourceStore.IsEligible(character.Id),
-                v => CrossSourceStore.Toggle(character.Id));
-            lendToggle.TooltipText = LendCardsTooltip;
-            hbox.AddChild(lendToggle);
+            // Yes/No reads more naturally than Shown/Hidden for an eligibility flag (M16).
+            hbox.AddChild(MakeToggle(CrossSourceStore.IsEligible(character.Id),
+                v => CrossSourceStore.Toggle(character.Id), "Yes", "No"));
 
-            _rows.Add(new RowVisual(character, panel, normal, selected));
+            _rows.Add(new RowVisual(character, panel, normal, selected, sparkHolder));
             return panel;
         }
 
@@ -257,21 +310,57 @@ namespace CharacterManager.UI
             // Large portrait, framed
             _detailContent.AddChild(BuildImageFrame(character));
 
-            // W/L line
-            var stats = SaveManager.Instance.Progress.GetStatsForCharacter(character.Id);
-            int wins = stats?.TotalWins ?? 0;
-            int losses = stats?.TotalLosses ?? 0;
-            bool hasHistory = wins > 0 || losses > 0;
+            // W/L line — click to cycle scope: Standard official → all runs → all + abandoned (M16).
+            var official = SaveManager.Instance.Progress.GetStatsForCharacter(character.Id);
+            var allRuns = RosterWinHistory.Get(character.Id);
+            bool hasHistory = (official?.TotalWins ?? 0) + (official?.TotalLosses ?? 0) > 0
+                || allRuns.Wins + allRuns.Losses + allRuns.Abandoned > 0;
+
+            (int wlWins, int wlLosses, int wlAband, string wlCaption, bool showAband) = _wlScope switch
+            {
+                WlScope.AllDecisive => (allRuns.Wins, allRuns.Losses, 0, "All runs · every mode", false),
+                WlScope.AllRuns => (allRuns.Wins, allRuns.Losses, allRuns.Abandoned, "All runs · incl. abandoned", true),
+                _ => (official?.TotalWins ?? 0, official?.TotalLosses ?? 0, 0, "Standard · official", false),
+            };
+
+            var wlBox = new VBoxContainer
+            {
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                MouseFilter = MouseFilterEnum.Stop, // receive clicks to cycle scope
+            };
+            wlBox.AddThemeConstantOverride("separation", 0);
+            wlBox.TooltipText =
+                "Win / loss scope — click to cycle:\n" +
+                "Standard (official) → all runs → all runs + abandoned.\n" +
+                "Official counts only Standard mode; the others include Custom and Daily.";
+            wlBox.GuiInput += e =>
+            {
+                if (e is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left)
+                {
+                    CycleWlScope();
+                    AcceptEvent();
+                }
+            };
 
             var wl = new HBoxContainer
             {
                 Alignment = BoxContainer.AlignmentMode.Center,
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                MouseFilter = MouseFilterEnum.Ignore,
             };
             wl.AddThemeConstantOverride("separation", 14);
-            wl.AddChild(UiTheme.MakeLabel($"W: {wins}", UiTheme.Good, UiTheme.BodyFontSize + 2, HorizontalAlignment.Center));
-            wl.AddChild(UiTheme.MakeLabel($"L: {losses}", UiTheme.Bad, UiTheme.BodyFontSize + 2, HorizontalAlignment.Center));
-            _detailContent.AddChild(wl);
+            wl.AddChild(UiTheme.MakeLabel($"W: {wlWins}", UiTheme.Good, UiTheme.BodyFontSize + 2, HorizontalAlignment.Center));
+            wl.AddChild(UiTheme.MakeLabel($"L: {wlLosses}", UiTheme.Bad, UiTheme.BodyFontSize + 2, HorizontalAlignment.Center));
+            if (showAband)
+                wl.AddChild(UiTheme.MakeLabel($"A: {wlAband}", UiTheme.Muted, UiTheme.BodyFontSize + 2, HorizontalAlignment.Center));
+            wlBox.AddChild(wl);
+
+            var wlCap = UiTheme.MakeLabel(wlCaption, UiTheme.Muted, UiTheme.SmallFontSize, HorizontalAlignment.Center);
+            wlCap.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            wlCap.MouseFilter = MouseFilterEnum.Ignore;
+            wlBox.AddChild(wlCap);
+
+            _detailContent.AddChild(wlBox);
 
             // History + Analytics (side by side)
             var btnRow = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -534,18 +623,161 @@ namespace CharacterManager.UI
             return holder;
         }
 
-        /// <summary>A Shown/Hidden toggle button. <paramref name="toggle"/> returns the new state.</summary>
-        private static Button MakeToggle(bool active, Func<bool, bool> toggle)
+        /// <summary>
+        /// A two-state toggle button. <paramref name="toggle"/> returns the new state. The on/off
+        /// labels default to Shown/Hidden but can be overridden (e.g. Yes/No for Lend Cards — M16).
+        /// </summary>
+        private static Button MakeToggle(bool active, Func<bool, bool> toggle,
+            string onText = "Shown", string offText = "Hidden")
         {
-            var btn = UiTheme.MakeButton(active ? "Shown" : "Hidden", active ? UiTheme.Good : UiTheme.Bad, ColWidth);
+            var btn = UiTheme.MakeButton(active ? onText : offText, active ? UiTheme.Good : UiTheme.Bad, ColWidth);
+            btn.FocusMode = FocusModeEnum.None; // don't keep a "selected" highlight after clicking
             btn.Pressed += () =>
             {
                 bool now = toggle(active);
-                btn.Text = now ? "Shown" : "Hidden";
+                btn.Text = now ? onText : offText;
                 btn.AddThemeColorOverride("font_color", now ? UiTheme.Good : UiTheme.Bad);
                 active = now;
             };
             return btn;
+        }
+
+        // Tick strip geometry. Kept integer so ticks land on whole pixels.
+        private const int TickW = 5;
+        private const int TickH = 12;
+        private const int TickGap = 2;
+
+        /// <summary>Cycles the detail W/L scope (official → all → all+abandoned) and rebuilds the panel.</summary>
+        private void CycleWlScope()
+        {
+            _wlScope = (WlScope)(((int)_wlScope + 1) % 3);
+            if (_selected != null) BuildDetail(_selected);
+        }
+
+        /// <summary>Cycles Hidden → Shown → Counted and rebuilds every row's cell in place.</summary>
+        private void CycleAbandonMode()
+        {
+            _abandonMode = (AbandonMode)(((int)_abandonMode + 1) % 3);
+            UpdateWinRateHeader();
+            foreach (var row in _rows)
+                RebuildSparkline(row.SparkHolder, RosterWinHistory.Get(row.Character.Id));
+        }
+
+        // Orange signals "abandons now hurt the %" — distinct from the gold "shown only" state.
+        private static readonly Color CountedColor = new("ff9933");
+
+        /// <summary>Reflects the abandon mode on the header via colour + tooltip (text stays "Win Rate").</summary>
+        private void UpdateWinRateHeader()
+        {
+            if (_winRateHeaderBtn == null) return;
+
+            (Color color, string state) = _abandonMode switch
+            {
+                AbandonMode.Shown => (UiTheme.Title,
+                    "Abandoned runs shown as grey ticks — not counted in the %."),
+                AbandonMode.Counted => (CountedColor,
+                    "Abandoned runs shown as grey ticks AND counted as losses in the %."),
+                _ => (UiTheme.Muted,
+                    "Abandoned runs hidden — excluded from the strip and the %."),
+            };
+
+            // Override every state's font colour so the focus/hover/pressed white never hides it.
+            foreach (var key in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
+                _winRateHeaderBtn.AddThemeColorOverride(key, color);
+
+            _winRateHeaderBtn.TooltipText = WinRateTooltip + "\n\n" + state + "\nClick to cycle.";
+        }
+
+        /// <summary>The stable per-row container the win-rate cell is (re)built into.</summary>
+        private static VBoxContainer MakeSparkHolder()
+        {
+            var cell = new VBoxContainer
+            {
+                CustomMinimumSize = new Vector2(WinRateColWidth, 0f),
+                SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
+                MouseFilter = MouseFilterEnum.Ignore,
+            };
+            cell.AddThemeConstantOverride("separation", 3);
+            return cell;
+        }
+
+        /// <summary>
+        /// (Re)builds the win-rate cell (M16): a coloured win-rate % over a strip of recent-result
+        /// ticks (green win · red loss · grey abandoned when toggled on), oldest left → newest right.
+        /// Honours <see cref="_showAbandonedTicks"/>. The % itself is always decisive-only.
+        /// </summary>
+        private void RebuildSparkline(Control holder, RosterWinHistory.Series series)
+        {
+            foreach (Node child in holder.GetChildren())
+                child.QueueFree();
+
+            bool includeAbandoned = _abandonMode != AbandonMode.Hidden;
+            bool countAbandoned = _abandonMode == AbandonMode.Counted;
+            double rate = series.WinRatePctCounting(countAbandoned);
+            var recent = series.Recent(SparkTicks, includeAbandoned);
+            if (recent.Count == 0 && rate < 0)
+            {
+                holder.AddChild(MakeFixedLabel("—", UiTheme.Muted, WinRateColWidth));
+                return;
+            }
+
+            var pct = UiTheme.MakeLabel(rate < 0 ? "—" : $"{rate:0}%",
+                RateColor(rate), UiTheme.BodyFontSize, HorizontalAlignment.Center);
+            pct.CustomMinimumSize = new Vector2(WinRateColWidth, 0f);
+            pct.TooltipText = $"{series.Wins}W · {series.Losses}L"
+                + (series.Abandoned > 0 ? $" · {series.Abandoned} abandoned" : "")
+                + $"  ({series.Decisive} decisive)";
+            pct.MouseFilter = MouseFilterEnum.Stop; // enable the W/L hover tooltip
+            holder.AddChild(pct);
+
+            holder.AddChild(BuildTickStrip(recent));
+        }
+
+        /// <summary>
+        /// A fixed-size <see cref="Control"/> holding the tick rects at integer offsets, so the strip
+        /// shifts as a whole when centred instead of each tick being re-rounded independently by a
+        /// container (which is what made the spacing look uneven). ColorRects, not custom <c>_Draw</c>
+        /// (see CLAUDE.md).
+        /// </summary>
+        private static Control BuildTickStrip(List<RosterWinHistory.Outcome> recent)
+        {
+            int n = recent.Count;
+            int pitch = TickW + TickGap;
+            var strip = new Control
+            {
+                CustomMinimumSize = new Vector2(n > 0 ? n * pitch - TickGap : 0f, TickH),
+                SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
+                MouseFilter = MouseFilterEnum.Ignore,
+            };
+            for (int i = 0; i < n; i++)
+            {
+                strip.AddChild(new ColorRect
+                {
+                    Color = TickColor(recent[i]),
+                    Position = new Vector2(i * pitch, 0f),
+                    Size = new Vector2(TickW, TickH),
+                    MouseFilter = MouseFilterEnum.Ignore,
+                });
+            }
+            return strip;
+        }
+
+        private static Color TickColor(RosterWinHistory.Outcome o) => o switch
+        {
+            RosterWinHistory.Outcome.Win => UiTheme.Good,
+            RosterWinHistory.Outcome.Loss => UiTheme.Bad,
+            _ => UiTheme.Muted,
+        };
+
+        /// <summary>Colour for a win-rate %: green ≥50, gold ≥30, red below (muted when unknown).</summary>
+        private static Color RateColor(double pct)
+        {
+            if (pct < 0) return UiTheme.Muted;
+            if (pct >= 50.0) return UiTheme.Good;
+            if (pct >= 30.0) return UiTheme.Title;
+            return UiTheme.Bad;
         }
 
         private static Label MakeFixedLabel(string text, Color color, float width)
@@ -601,6 +833,17 @@ namespace CharacterManager.UI
             _stack.Push(_infoScreen);
         }
 
+        private void OpenHelp()
+        {
+            if (_stack == null) { Log.Error("[CharacterManager] _stack is null — cannot open help."); return; }
+            if (_helpScreen == null || !GodotObject.IsInstanceValid(_helpScreen))
+            {
+                _helpScreen = new CharacterHelpScreen { Visible = false };
+                _stack.AddChild(_helpScreen);
+            }
+            _stack.Push(_helpScreen);
+        }
+
         private void OpenAnalytics(CharacterModel character)
         {
             if (_stack == null) { Log.Error("[CharacterManager] _stack is null — cannot open analytics."); return; }
@@ -635,13 +878,16 @@ namespace CharacterManager.UI
             public readonly PanelContainer Panel;
             public readonly StyleBoxFlat Normal;
             public readonly StyleBoxFlat Selected;
+            public readonly Control SparkHolder;   // rebuilt in place on the abandoned-ticks toggle
 
-            public RowVisual(CharacterModel character, PanelContainer panel, StyleBoxFlat normal, StyleBoxFlat selected)
+            public RowVisual(CharacterModel character, PanelContainer panel, StyleBoxFlat normal,
+                StyleBoxFlat selected, Control sparkHolder)
             {
                 Character = character;
                 Panel = panel;
                 Normal = normal;
                 Selected = selected;
+                SparkHolder = sparkHolder;
             }
         }
     }

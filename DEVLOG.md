@@ -45,6 +45,7 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | M13 | Export extension (all aggregates) | ✅ Shipped (advanced follow-ups open) | v0.6.0 |
 | M14 | Analytics UI polish (density + bars) | ✅ Shipped | v0.6.0 |
 | **M15** | **Cross-character source control (Kaleidoscope/Colorful Philosophers/…)** | ✅ Shipped | v0.7.0 |
+| **M16** | **Manager list polish: per-row win-rate sparkline, Yes/No Lend Cards, ? Help screen** | 🛠️ In progress (unreleased) | — |
 
 **Current released version: v0.7.0** (all three channels). `min_game_version 0.107.1`.
 
@@ -174,6 +175,24 @@ Appearance/eligibility gates (`Kaleidoscope.IsAllowedAtNeow`, `ColorfulPhilosoph
 **UI.** A "Lend Cards" column in the Character Manager (per-character toggle, hover tooltip). Base characters are eligible by default and toggleable.
 
 **Base-character select management (v0.7.0).** The In-Select toggle was extended to base characters (previously custom-only): `CharacterSelectPatch.IsDisabled` no longer exempts base chars, and the `AllCharacters` getter postfix now hides disabled base chars during button construction. A safety guard keeps the full roster if *every* character would be disabled, so the select screen can never be empty.
+
+---
+
+### M16 — Manager list polish (sparkline · Yes/No · Help)
+
+Three usability tweaks to the manager list itself, no new gameplay patches.
+
+**Per-row win-rate sparkline.** A new "Win Rate" column surfaces each character's win rate (%) over a strip of recent-result ticks (green win / red loss, oldest left → newest right), so the list reads as informative at a glance instead of leaving the row half-empty. Colour-graded %: green ≥50, gold ≥30, red below; a dash when there are no decisive runs. Hovering the % shows exact W/L and run count.
+- **Data: `RosterWinHistory` (`Code/Analytics/`).** The analytics screen's `CharacterAnalytics.Compute` does a deep per-floor parse for *one* character — far too heavy to call per row. `RosterWinHistory` instead does a single O(files) pass over all `.run` files reading only top-level fields (`Win`, `WasAbandoned`, `StartTime`, `Players[].Character`), bucketing each run's outcome under every character that played it. One shared pass fills the whole roster. Cached by the same run-file-count generation token as `AnalyticsCache`; a failed file-list read is never cached (no startup-empty poison).
+- **Scope:** all game modes; the % counts decisive runs only (wins + deaths). `RosterWinHistory` retains a 3-state outcome per run (win/loss/abandoned) so abandons can be shown without affecting the rate. Intentionally a richer set than the detail panel's Standard-only official W/L (M16 decision).
+- **Abandoned cycle:** the "Win Rate" column header is a button that cycles three modes — Hidden (default; abandons excluded from strip and %), Shown (grey ticks in the strip, not in the %), Counted (grey ticks AND counted as losses in the %, since outside of testing an abandon is usually a lost run). Header colour signals the mode (muted → gold → orange) with a tooltip; strips rebuild in place, preserving selection. The header (and the row toggles) use `FocusMode = None` so Godot doesn't leave the button "selected" after a click — which both stuck until another control was clicked and overrode the state colour with the theme's focus-white.
+- **Rendering:** `ColorRect` ticks laid out at integer offsets inside one fixed-size `Control` (not an `HBoxContainer` — container per-child rounding at a fractional centre origin made the spacing look uneven; a single control shifts all ticks together). Custom `_Draw` is still avoided per the standing rule (see CLAUDE.md). No PCK art.
+
+**Detail-panel W/L scope.** The W/L line under the portrait is clickable, cycling three scopes: Official (the game's Standard-only ranked tally, via `Progress.GetStatsForCharacter` — default), All decisive (wins + losses across every mode, from `RosterWinHistory`), and All runs (adds a separate grey `A:` abandoned count). A caption names the current scope. The History button's enabled-gate now considers all-mode history too, so a character with only Custom/Daily runs is no longer wrongly greyed out.
+
+**Lend Cards → Yes/No.** `MakeToggle` gained optional on/off label params; the Lend Cards column now reads Yes/No (an eligibility flag) while Stats and In Select keep Shown/Hidden (visibility).
+
+**Tooltip rework + `?` Help screen.** The per-button hover tooltips (they fired on every In-Select / Lend-Cards toggle and felt noisy) were removed; the column *headers* keep concise tooltips. A new `?` button in the header opens `CharacterHelpScreen` — a code-built `NSubmenu` reference documenting every column, the sparkline, the detail-panel buttons, the Lend-Cards mechanic, and the random pool. Same single-instance reuse + scroll-of-section-panels pattern as the Info/Analytics drill-ins; static content built once on first open.
 
 ---
 
