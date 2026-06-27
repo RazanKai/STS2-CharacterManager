@@ -14,6 +14,13 @@ built-in charts.
 - **Character Manager screen** (Compendium → *Manage Characters*): a roster list with
   each character's icon, name, and source mod, paired with a detail panel showing a
   large portrait, win/loss, and quick actions.
+- **At-a-glance Win Rate column** — each row shows the character's win-rate % over a
+  strip of recent-result ticks (green win · red loss · grey abandoned), newest on the
+  right. Click the **Win Rate** header to cycle how abandoned runs are treated:
+  hidden, shown in the strip, or counted as losses in the %.
+- **Switchable W/L scope** — click the win/loss line in the detail panel to cycle the
+  game's **official (Standard-only)** tally → all runs across every mode → all runs
+  including abandoned.
 - **Stats visibility toggle** — show/hide each custom character in the Compendium stats.
 - **In-select enable/disable** — keep any character (base **or** modded) out of the
   character-select roster without uninstalling it. Applies immediately (no restart),
@@ -65,10 +72,11 @@ built-in charts.
 
 Open the **Compendium** from the main menu and click **Manage Characters** (next to
 Character Stats). Select any character in the list to populate the detail panel, then
-use **History**, **Analytics**, or **Info**. Toggle the **In Select** and **Lend Cards**
-columns directly in the list (for base and modded characters); **Stats** visibility is a
-custom-character toggle (base stats always show). Hover any column header or toggle for a
-tooltip explaining it.
+use **History**, **Analytics**, or **Info**. Toggle the **In Select** (Shown/Hidden) and
+**Lend Cards** (Yes/No) columns directly in the list (for base and modded characters);
+**Stats** visibility is a custom-character toggle (base stats always show). Hover a column
+header for a quick tooltip, or click the **?** button in the top bar for a full
+features/how-it-works screen.
 
 ## Notes & limitations
 
