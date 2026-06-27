@@ -45,9 +45,9 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | M13 | Export extension (all aggregates) | ✅ Shipped (advanced follow-ups open) | v0.6.0 |
 | M14 | Analytics UI polish (density + bars) | ✅ Shipped | v0.6.0 |
 | **M15** | **Cross-character source control (Kaleidoscope/Colorful Philosophers/…)** | ✅ Shipped | v0.7.0 |
-| **M16** | **Manager list polish: per-row win-rate sparkline, Yes/No Lend Cards, ? Help screen** | 🛠️ In progress (unreleased) | — |
+| **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 
-**Current released version: v0.7.0** (all three channels). `min_game_version 0.107.1`.
+**Current released version: v0.8.0** (all three channels). `min_game_version 0.107.1`.
 
 ---
 
@@ -226,6 +226,15 @@ Three usability tweaks to the manager list itself, no new gameplay patches.
 ---
 
 ## Release History
+
+### v0.8.0 (2026-06-27) — Manager list polish (M16)
+Usability pass on the manager list itself; no new gameplay patches, `min_game_version` unchanged.
+- **Win Rate column:** per-row win-rate % + recent-results tick strip (green win / red loss / grey abandoned), from a new lightweight all-modes `RosterWinHistory` (single shared pass, cached on the run-file generation token). Ticks laid out at integer offsets in one fixed-size Control for even spacing.
+- **Abandoned cycle:** the Win Rate column header cycles Hidden → Shown-in-strip → Counted-as-losses-in-%, colour-coded (muted → gold → orange).
+- **W/L scope:** the detail-panel win/loss line is clickable, cycling Standard-official → all runs (every mode) → all runs incl. abandoned (separate `A:` count); History button gate now considers all-mode history.
+- **Lend Cards → Yes/No**; per-button tooltips removed in favour of header tooltips + a new **?** Help screen documenting every feature.
+- **Fix:** toggle buttons use `FocusMode.None` so they never stay "selected" after a click (Godot focus-white was sticking and overriding the state colour).
+- **Distribution:** GitHub `v0.8.0` (`beta`→`main`), Nexus via CI auto-fire, Steam Workshop `3747550119`.
 
 ### v0.7.0 (2026-06-27) — Cross-character source control (M15)
 Per-character "Lend Cards" control over which characters' pools the cross-character mechanics (Kaleidoscope, Colorful Philosophers, Splash, Prismatic Gem, Orobas/SeaGlass) may draw from, via five per-consumer transpilers + a never-empty `CrossSourceFilter`.
