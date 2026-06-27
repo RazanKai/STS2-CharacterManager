@@ -46,7 +46,7 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | M14 | Analytics UI polish (density + bars) | ✅ Shipped | v0.6.0 |
 | **M15** | **Cross-character source control (Kaleidoscope/Colorful Philosophers/…)** | ✅ Shipped | v0.7.0 |
 
-**Current released version: v0.7.0** (all three channels). `min_game_version 0.107.1`. M15 plan: `M15-CROSS-CHARACTER-POOL-PLAN.md`.
+**Current released version: v0.7.0** (all three channels). `min_game_version 0.107.1`.
 
 ---
 
@@ -175,8 +175,6 @@ Appearance/eligibility gates (`Kaleidoscope.IsAllowedAtNeow`, `ColorfulPhilosoph
 
 **Base-character select management (v0.7.0).** The In-Select toggle was extended to base characters (previously custom-only): `CharacterSelectPatch.IsDisabled` no longer exempts base chars, and the `AllCharacters` getter postfix now hides disabled base chars during button construction. A safety guard keeps the full roster if *every* character would be disabled, so the select screen can never be empty.
 
-Full pre-implementation analysis in **`M15-CROSS-CHARACTER-POOL-PLAN.md`**.
-
 ---
 
 ## Technical Lessons Learned
@@ -246,8 +244,7 @@ STS2 0.107.0 → 0.107.1 (1481 modified source files, 116 hook-signature changes
 
 ## Future work
 
-1. **M15 — cross-character source control** (planned; see `M15-CROSS-CHARACTER-POOL-PLAN.md`).
-2. **Advanced analytics follow-ups (from M13):** card & ancient Elo; filter-by-individual-pick; surface `progress.save` progression.
+1. **Advanced analytics follow-ups (from M13):** card & ancient Elo; filter-by-individual-pick; surface `progress.save` progression.
 3. **Compare Characters view** — sourceable today from the existing per-character aggregates.
 4. **Win streaks / fastest win for Custom/Daily** — the official `CharacterStats` only tracks these for Standard.
 5. **Character conflict detection** — surface duplicate `ModelId` registrations (modded characters silently overwriting each other in `_contentById`).
