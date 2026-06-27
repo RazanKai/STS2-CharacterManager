@@ -15,23 +15,33 @@ built-in charts.
   each character's icon, name, and source mod, paired with a detail panel showing a
   large portrait, win/loss, and quick actions.
 - **Stats visibility toggle** — show/hide each custom character in the Compendium stats.
-- **In-select enable/disable** — keep custom characters out of the character-select
-  roster without uninstalling them. Applies immediately (no restart), and works for
-  characters added by character libraries (e.g. BaseLib/RitsuLib mods) too.
+- **In-select enable/disable** — keep any character (base **or** modded) out of the
+  character-select roster without uninstalling it. Applies immediately (no restart),
+  works for characters added by character libraries (e.g. BaseLib/RitsuLib mods) too,
+  and a safety guard never lets you empty the roster.
 - **Configurable Random pool** — when the **Random** option is selected, a pool panel
   lets you pick exactly which characters Random may draw, with per-character In/Out
   toggles and All/None shortcuts. Multiplayer-synced. Characters you've hidden in-select
   are never drawn at random.
+- **Lend Cards (cross-character source control)** — choose which characters' card/relic
+  pools the cross-character mechanics — **Kaleidoscope, Colorful Philosophers, Splash,
+  Prismatic Gem, and Orobas/SeaGlass** — may draw from. Per-character toggle with a hover
+  tooltip; works for base and modded characters and never empties a pool. It changes only
+  what those relics/events *offer*, not whether they can appear.
 - **Per-character info card** — starting HP/gold/energy, gender, starting deck (with a
   card-type composition chart), starting relics/potions, and unlock requirement.
 - **Run-history filtering** — jump straight to a character's runs in the game's own
   Run History screen.
-- **Per-character analytics** — outcomes, win rate, per-ascension W/L, act-reached
-  distribution, and run-length stats, rendered as charts. Correctly separates the
-  game's **official (Standard-run)** stats from **Custom/Daily** runs, which the game
-  excludes from official tallies.
-- **Read-only export** — write a character's stats to JSON + CSV from the analytics
-  screen.
+- **Per-character analytics** — outcomes, win rate, win-rate moving windows, per-ascension
+  W/L, act/floor-reached distributions, and run-length stats; plus deep deck-derived
+  lists — card / relic / potion / ancient pick & win-rate & avoidance, deadliest and
+  most-damaging encounters, combat-by-tier, and death causes — with All/Standard/Custom/Daily
+  + ascension + recent-N filters. Correctly separates the game's **official (Standard-run)**
+  stats from **Custom/Daily** runs, which the game excludes from official tallies.
+- **Single-run autopsy** — drill into one run floor-by-floor: HP over time, boss damage,
+  ancients taken, and a per-act event log, with ◀/▶ navigation across the character's runs.
+- **Read-only export** — write a character's stats and every analytics aggregate to JSON
+  and per-aggregate CSV files from the analytics screen.
 - Native look: the UI inherits the game's theme and fonts, and the *Manage Characters*
   button matches the game's own Compendium buttons.
 
@@ -48,16 +58,17 @@ built-in charts.
 2. Download the latest `charactermanager` release.
 3. Copy the mod folder into your game's `mods/` directory:
    `…/Slay the Spire 2/mods/charactermanager/`
-   (it should contain `charactermanager.dll`, `mod_manifest.json`, and the .NET
-   sidecar files).
+   (it should contain `charactermanager.dll` and `mod_manifest.json`).
 4. Launch the game and open **Compendium → Manage Characters**.
 
 ## Usage
 
 Open the **Compendium** from the main menu and click **Manage Characters** (next to
 Character Stats). Select any character in the list to populate the detail panel, then
-use **History**, **Analytics**, or **Info**. Toggle a custom character's **Stats** and
-**In Select** columns directly in the list.
+use **History**, **Analytics**, or **Info**. Toggle the **In Select** and **Lend Cards**
+columns directly in the list (for base and modded characters); **Stats** visibility is a
+custom-character toggle (base stats always show). Hover any column header or toggle for a
+tooltip explaining it.
 
 ## Notes & limitations
 
