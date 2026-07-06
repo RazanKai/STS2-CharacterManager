@@ -111,7 +111,7 @@ namespace CharacterManager
             var charAssembly = character.GetType().Assembly;
             foreach (var mod in ModManager.GetLoadedMods())
             {
-                if (mod.assembly == charAssembly)
+                if (mod.assemblies.Contains(charAssembly))
                     return mod;
             }
             return null;

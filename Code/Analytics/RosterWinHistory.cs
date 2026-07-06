@@ -19,8 +19,28 @@ namespace CharacterManager.Analytics
     /// row.</para>
     ///
     /// <para><b>Scope.</b> All game modes (Standard + Custom + Daily), decisive runs only — wins and
-    /// deaths; abandoned runs are excluded (matching the official win-rate definition). This is a
-    /// richer set than the detail panel's Standard-only W/L by design (M16 decision).</para>
+    /// deaths; abandoned runs are tracked but excluded from the win-rate %. This is a richer set than
+    /// the detail panel's Standard-only W/L by design (M16 decision).</para>
+    ///
+    /// <para><b>Not the same definition as "official."</b> The game's own lifetime tally
+    /// (<c>CharacterStats.TotalLosses</c>, read by the detail panel's "Standard · official" scope)
+    /// counts an abandoned Standard run as a loss (<c>ProgressSaveManager.UpdateWithRunData</c> is
+    /// called for wins, deaths, AND abandons alike, with abandons going through the "not victory"
+    /// branch). This series deliberately does NOT do that — abandoned runs are their own
+    /// <see cref="Outcome.Abandoned"/> bucket, excluded from <see cref="Series.WinRatePct"/> unless
+    /// the caller opts into <see cref="Series.WinRatePctCounting"/>. So "official" Losses and this
+    /// series' Losses are never directly comparable, even restricted to the same mode — confirmed as
+    /// the root cause of a user-reported "numbers don't match" report (2026-07-06); see DEVLOG.</para>
+    ///
+    /// <para><b>Whose run it credits (FIXED 2026-07-06 — Bug 4).</b> This series only credits the
+    /// LOCAL player's own character per run, via <see cref="LocalPlayerResolver"/> — the same
+    /// resolution the game itself uses to attribute a multiplayer run's outcome
+    /// (<c>ProgressSaveManager.UpdateWithRunData</c>). An earlier version looped every player in the
+    /// file and credited each one's own character unconditionally, so a co-op partner's pick in a
+    /// shared run would show up in THIS profile's row for that character — a real bug, not a
+    /// documented divergence, caught when a user asked why a partner's runs would ever belong in
+    /// their own stats. The identical mistake also existed independently in <c>CharacterAnalytics.Compute</c>
+    /// and <c>CharacterRunAutopsyScreen</c> (Bug 5) — see DEVLOG.</para>
     ///
     /// <para><b>Invalidation.</b> Same cheap generation token as <see cref="AnalyticsCache"/>: the
     /// count of run-history files. A changed count forces a reload. A failed file-list read is never
@@ -135,14 +155,16 @@ namespace CharacterManager.Analytics
                     // excluded from the win-rate % via the Outcome split below.
                     Outcome outcome = h.WasAbandoned ? Outcome.Abandoned
                         : (h.Win ? Outcome.Win : Outcome.Loss);
-                    if (h.Players == null) continue;
-                    foreach (var p in h.Players)
-                    {
-                        var id = p?.Character;
-                        if (id == null || id == ModelId.none) continue;
-                        if (!builders.TryGetValue(id, out var b)) { b = new Builder(); builders[id] = b; }
-                        b.Runs.Add((h.StartTime, outcome));
-                    }
+                    if (h.Players == null || h.Players.Count == 0) continue;
+
+                    // Attribute the run to OUR OWN character only — never a co-op partner's pick.
+                    RunHistoryPlayer? mine = LocalPlayerResolver.Resolve(h, name);
+                    if (mine == null) continue; // couldn't identify our own player in this run
+
+                    var id = mine.Character;
+                    if (id == null || id == ModelId.none) continue;
+                    if (!builders.TryGetValue(id, out var b)) { b = new Builder(); builders[id] = b; }
+                    b.Runs.Add((h.StartTime, outcome));
                 }
                 catch (Exception e)
                 {

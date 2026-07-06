@@ -152,6 +152,10 @@ namespace CharacterManager.UI
                 "on the game's official tally, which counts Standard mode only, then switches to all " +
                 "runs across every mode (Custom and Daily included), then to all runs with abandoned " +
                 "runs shown as a separate A count. The caption beneath always names the current scope.",
+                "Heads up: the official tally's Losses also includes abandoned Standard runs (the game " +
+                "itself treats an abandon as a loss there), while the other two scopes always break " +
+                "abandons out separately. So it's normal — not a bug — for the official Losses number to " +
+                "come out higher than what the all-runs decisive count shows.",
                 "History opens the game's run-history viewer filtered to just this character. Analytics " +
                 "opens a deep per-character breakdown — win-rate windows, card / relic / potion / " +
                 "ancient pick and win rates, encounter and death analytics, act/floor distributions, " +

@@ -249,12 +249,14 @@ namespace CharacterManager.Analytics
                     RunHistory? h = result.SaveData;
                     if (h == null) continue;
 
-                    // Find this character's player (for its NetId, used to pick the right per-floor
-                    // PlayerStats in multiplayer, and for the final deck snapshot).
-                    RunHistoryPlayer? me = null;
-                    foreach (var p in h.Players)
-                        if (p.Character == characterId) { me = p; break; }
-                    if (me == null) continue;
+                    // Resolve OUR OWN player in this run (never a co-op partner's — see
+                    // LocalPlayerResolver / DEVLOG Bug 5), then only include this run in
+                    // characterId's analytics if WE were the one who played it. Matching on
+                    // "whichever player played characterId" instead of on identity used to
+                    // misattribute a partner's picks/deck/relics to this profile's own analytics
+                    // whenever a partner played the character being analyzed.
+                    RunHistoryPlayer? me = LocalPlayerResolver.Resolve(h, name);
+                    if (me == null || me.Character != characterId) continue;
 
                     // Acts/floors *reached* come from MapPointHistory (outer list = acts actually
                     // entered, inner lists = floors within each act). h.Acts is the run's full planned

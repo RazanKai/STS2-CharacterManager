@@ -551,7 +551,7 @@ namespace CharacterManager.UI
 
         // ─── Card analytics (M9) ─────────────────────────────────────────────
 
-        /// <summary>Builds the four card ranked lists from the filtered aggregate.</summary>
+        /// <summary>Builds the card ranked lists from the filtered aggregate.</summary>
         private void AddCardSections(CharacterAnalytics agg)
         {
             var stats = agg.ComputeCardStats(_cardUpgradeAware);
@@ -590,17 +590,18 @@ namespace CharacterManager.UI
                 s => $"{s.WinRatePct:0.#}% ({s.WinsWith}/{s.RunsWith})",
                 s => (float)Math.Max(0, s.WinRatePct), UiTheme.Bad, 100f);
 
-            // Most avoided — offered enough times but rarely taken (caveat 6).
-            var avoided = new List<CardStat>(stats);
-            avoided.RemoveAll(s => s.Offered < CardMinSample);
-            avoided.Sort((a, b) =>
-            {
-                int c = a.PickRatePct.CompareTo(b.PickRatePct);
-                return c != 0 ? c : b.Offered.CompareTo(a.Offered);
-            });
-            AddCardListSection($"Most Avoided  (≥{CardMinSample} offers)", avoided,
-                s => $"{s.PickRatePct:0.#}% taken ({s.Picks}/{s.Offered})",
-                s => (float)Math.Max(0, s.PickRatePct), UiTheme.Muted, 100f);
+            // "Most Avoided" was removed (reported broken by a user's playtest — see DEVLOG for
+            // the confirmed root cause). CardStat.Offered/PickRatePct are still computed from
+            // PlayerMapPointHistoryEntry.CardChoices, but that list isn't reward-offers-only: the
+            // game also appends wasPicked:false entries for every unsold card left in a merchant's
+            // stock (MerchantRoom.Exit), plus a few relic/event card reveals (HeftyTablet,
+            // LeadPaperweight, MassiveScroll, FakeMerchant, generic EventModel declines) — none of
+            // which carry a source flag to separate them from genuine card-reward skips. Since
+            // purchased shop cards never get a matching wasPicked:true entry from that same path,
+            // Offered is inflated with one-sided "declines" for ordinary shop stock, which swamps
+            // real reward-skip signal and makes a pick-rate-based "avoided" ranking meaningless.
+            // A correct fix would need to capture reward decisions directly (e.g. a Harmony hook on
+            // CardReward) instead of reconstructing them from saved run history.
         }
 
         /// <summary>One capped, bar-ranked card list. <paramref name="maxWeight"/> &gt; 0 fixes the bar

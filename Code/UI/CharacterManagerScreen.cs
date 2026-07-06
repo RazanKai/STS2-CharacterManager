@@ -332,7 +332,10 @@ namespace CharacterManager.UI
             wlBox.TooltipText =
                 "Win / loss scope — click to cycle:\n" +
                 "Standard (official) → all runs → all runs + abandoned.\n" +
-                "Official counts only Standard mode; the others include Custom and Daily.";
+                "Official counts only Standard mode; the others include Custom and Daily.\n" +
+                "Official's Losses also folds in abandoned Standard runs (the game counts an abandon " +
+                "as a loss there); the other two scopes always break abandons out separately, so " +
+                "Official Losses can come out higher than the all-runs decisive count — that's expected.";
             wlBox.GuiInput += e =>
             {
                 if (e is InputEventMouseButton mb && mb.Pressed && mb.ButtonIndex == MouseButton.Left)

@@ -159,10 +159,17 @@ namespace CharacterManager.UI
                 _navLabel.Text = $"Run {_index + 1} of {_runs.Count}   ·   {FormatDate(h.StartTime)}   ·   {result}";
             RefreshNavButtons();
 
-            // Walk the run for this character's player.
-            RunHistoryPlayer? me = null;
-            foreach (var p in h.Players)
-                if (p.Character == c.Id) { me = p; break; }
+            // Resolve OUR OWN player in this run — never a co-op partner's, even if a partner
+            // happened to play the same character (see LocalPlayerResolver / DEVLOG Bug 5).
+            RunHistoryPlayer? me = LocalPlayerResolver.Resolve(h, summary.HistoryName);
+            if (me != null && me.Character != c.Id)
+            {
+                // The run list should already be scoped to runs WE played as this character
+                // (CharacterAnalytics.Compute), so this shouldn't happen — but never show another
+                // player's floor data under a mismatch.
+                Log.Warn($"[CharacterManager] Autopsy: local player in '{summary.HistoryName}' played {me.Character}, not {c.Id}; showing no per-floor data.");
+                me = null;
+            }
 
             var floors = BuildFloorViews(h, me);
 
