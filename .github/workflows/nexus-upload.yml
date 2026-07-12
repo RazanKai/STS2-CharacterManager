@@ -10,6 +10,10 @@ name: Upload to Nexus Mods
 #
 # Run it: Actions tab -> "Upload to Nexus Mods" -> Run workflow (pick the tag),
 # or it fires automatically whenever a GitHub release is published.
+#
+# The Nexus file "description" is derived from the GitHub release notes at run
+# time (markdown stripped to plain text), so it always matches the release and
+# never needs a per-release edit to this workflow.
 
 on:
   workflow_dispatch:
@@ -41,6 +45,30 @@ jobs:
           echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
           echo "filename=charactermanager-$TAG.zip" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve description from release notes
+        id: desc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Pull this release's notes (the body); fall back to its title, then to a
+          # generic line, so the description is always populated and always current.
+          BODY="$(gh release view "$TAG" -R "$REPO" --json body -q .body || true)"
+          if [ -z "$BODY" ]; then
+            BODY="$(gh release view "$TAG" -R "$REPO" --json name -q .name || true)"
+          fi
+          if [ -z "$BODY" ]; then
+            BODY="Character Manager $TAG."
+          fi
+          # Strip common markdown so Nexus renders clean plain text.
+          CLEAN="$(printf '%s\n' "$BODY" | sed -E 's/^#+[[:space:]]*//; s/\*\*//g; s/`//g')"
+          {
+            echo "description<<__NEXUS_EOF__"
+            printf '%s\n' "$CLEAN"
+            echo "__NEXUS_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Download release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,6 +83,6 @@ jobs:
           filename: ${{ steps.vars.outputs.filename }}
           version: ${{ steps.vars.outputs.version }}
           display_name: "v${{ steps.vars.outputs.version }}"
-          description: "Compatibility update for Slay the Spire 2 v0.107.1."
+          description: ${{ steps.desc.outputs.description }}
           category: main
           archive_existing_version: 'true'
