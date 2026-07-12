@@ -46,8 +46,9 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | M14 | Analytics UI polish (density + bars) | ✅ Shipped | v0.6.0 |
 | **M15** | **Cross-character source control (Kaleidoscope/Colorful Philosophers/…)** | ✅ Shipped | v0.7.0 |
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
+| **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current released version: v0.8.1** (all three channels). `min_game_version 0.108.0`.
+**Current released version: v0.9.0** (GitHub + Nexus). `min_game_version 0.108.0`.
 
 ### Game update: v0.107.1 → v0.108.0 (2026-07-05)
 
@@ -200,6 +201,16 @@ Three usability tweaks to the manager list itself, no new gameplay patches.
 **Lend Cards → Yes/No.** `MakeToggle` gained optional on/off label params; the Lend Cards column now reads Yes/No (an eligibility flag) while Stats and In Select keep Shown/Hidden (visibility).
 
 **Tooltip rework + `?` Help screen.** The per-button hover tooltips (they fired on every In-Select / Lend-Cards toggle and felt noisy) were removed; the column *headers* keep concise tooltips. A new `?` button in the header opens `CharacterHelpScreen` — a code-built `NSubmenu` reference documenting every column, the sparkline, the detail-panel buttons, the Lend-Cards mechanic, and the random pool. Same single-instance reuse + scroll-of-section-panels pattern as the Info/Analytics drill-ins; static content built once on first open.
+
+### M17 — Compendium stats crash fix (non-playable meta-characters)
+
+**Symptom.** Opening Compendium → Statistics crashed to desktop (reported by a user; reproduced from the local `godot.log`). Not related to Downfall (the trigger mod in the report) or to any of our own features.
+
+**Root cause.** `CharacterModel.IconPath` resolves to `res://scenes/ui/character_icons/<id>_icon.tscn`. The game ships icon scenes only for the five playable characters. Non-playable *meta*-characters — `RandomCharacter` (the "?" random-pick placeholder, id `random_character`) and `Deprived` (a test character), both `IsPlayable == false` — have no icon scene, and vanilla never renders them, so vanilla never calls `.Icon` on them. RitsuLib's stats injection (`StatsScreenCharacterStatsPatch`), however, builds an `NCharacterStats` per character **without an `IsPlayable` guard**, so it renders `RandomCharacter`; its `_Ready` reads `.Icon`, the missing scene load fails (`Cannot open file`), and the game hard-crashes. The stack contained zero CharacterManager frames — our own `StatsGridPatch` already filters `!IsPlayable` via `CharacterHelper.GetAllCharacters`.
+
+**Fix — `NonPlayableStatsGuardPatch` (`Code/Patches/`).** A single prefix at the game's own choke point, `NCharacterStats._Ready`, which every stats card (base game, RitsuLib, or ours) funnels through. It resolves the card's character from the private `_characterStats.Id` and, if that character is `!IsPlayable`, `QueueFree()`s the just-added node and returns `false` — so the section is never built and `.Icon` is never reached. The parent container re-lays-out on removal, leaving no gap. This is independent of which mod injected the card, so it also suppresses any stray `Deprived` section.
+
+**Design note.** The first pass shipped an extra defensive guard on `CharacterModel.Icon` (return an empty `Control` on a missing/failed scene) to stop the crash. Once the `_Ready` prefix removed the non-playable card at the source, that guard only defended against a state that can no longer occur, so it was deleted rather than left as dead surface area — the `_Ready` prefix is the sole fix. Root cause is upstream in RitsuLib (missing `IsPlayable` guard); this is a local, single-choke-point defense.
 
 ---
 
