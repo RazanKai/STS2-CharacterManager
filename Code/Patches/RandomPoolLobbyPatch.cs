@@ -92,7 +92,9 @@ namespace CharacterManager.Patches
         }
 
         // A peer just connected — resend our pool so they have it well before run-start.
-        private static void OnPlayerConnected(LobbyPlayer _) => BroadcastLocalPool();
+        // Game v0.110: LobbyPlayer was split into StartRunLobbyPlayer / LoadRunLobbyPlayer /
+        // RunLobbyPlayer. StartRunLobby.PlayerConnected now carries StartRunLobbyPlayer.
+        private static void OnPlayerConnected(StartRunLobbyPlayer _) => BroadcastLocalPool();
 
         /// <summary>Send the local player's current pool to all peers. No-op in singleplayer.</summary>
         public static void BroadcastLocalPool()

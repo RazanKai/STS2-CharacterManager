@@ -48,7 +48,18 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 | **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current released version: v0.9.0** (GitHub + Nexus). `min_game_version 0.108.0`.
+**Current version: v0.9.1** (built + installed locally; not yet released). Last released: v0.9.0 (GitHub + Nexus). `min_game_version 0.110.0`.
+
+### Game update: v0.108.0 → v0.110.1 (2026-08-01)
+Re-decompiled (`decompiled_v0.108_backup` kept) and diffed: **54 added / 7 removed / 419 modified** source files, 2 hook changes (`ModifyCardPlayResultLocation` added; `AfterBlockBroken` now takes `PlayerChoiceContext` + two `Creature`s), and `AbstractModel.AfterModifyingCardPlayResultPileOrPosition` → `ModifyCardPlayResultLocation` / `AfterModifyingCardPlayResultLocation`. None of the changed hooks are ones we use.
+
+**One break in our code:** `MegaCrit.Sts2.Core.Entities.Multiplayer.LobbyPlayer` was deleted and split into `StartRunLobbyPlayer` / `LoadRunLobbyPlayer` / `RunLobbyPlayer`. `StartRunLobby.PlayerConnected` is now `Action<StartRunLobbyPlayer>`, so `RandomPoolNet.OnPlayerConnected(LobbyPlayer)` no longer compiled — retyped to `StartRunLobbyPlayer`. Behaviour unchanged (the arg is discarded; it only triggers a re-broadcast).
+
+**Everything else verified intact** against the new source: `StartRunLobby`'s 4-arg ctor + `CleanUp` + `BeginRunLocally(string, List<ModifierModel>)` (still a single `rng.NextItem(ModelDb.AllCharacters)` call, so the M7 transpiler still matches); `NRunHistory._runNames`/`RefreshAndSelectRun`/`OnSubmenuOpened`; `NSubmenu.OnSubmenuClosed`; `NGeneralStatsGrid.LoadStats` + `_characterStatContainer`; `NCompendiumSubmenu._Ready`/`_statisticsButton`/`_stack`; `NCompendiumBottomButton._locKeyPrefix`/`_label`/`_icon`/`_bgPanel`/`_hsv`; `NCharacterSelectScreen.SelectCharacter`/`InitCharacterButtons`; `NCustomRunScreen.InitCharacterButtons`; `NCharacterSelectButton.Character`/`IsRandom`; `NMainMenuSubmenuStack._characterSelectSubmenu`/`_customRunScreen`; `NCharacterStats._Ready`/`_characterStats`; `CharacterModel.VisualsPath`; `ModelDb._contentById`/`AllCharacters` (still 5 base chars); and all five M15 cross-source targets (`ColorfulPhilosophers`/`Orobas.GenerateInitialOptions`, `Kaleidoscope.AfterObtained`, `Splash.OnPlay`, `PrismaticGem.ModifyCardRewardCreationOptions`, `UnlockState.CharacterCardPools`/`Characters`).
+
+**Save schema:** RunHistory v9→v10, SerializableRun v18→v20, ProgressSave v22→v24, Settings v6→v7. The only ModelId rename is `CARD.SCARE` → `CARD.SIDESTEP`, applied by the game's own migration before we ever read it; we hardcode no model IDs, and every `RunHistory`/`RunHistoryPlayer` field the analytics read still exists. No mod-side migration needed.
+
+> **Note:** `check_mod_compatibility` reports 16 errors for this project — all of them are in `references/STS2mod-Stats_the_Spire/`, a third-party mod vendored for reference. Our own `Code/` tree is clean.
 
 ### Game update: v0.107.1 → v0.108.0 (2026-07-05)
 
@@ -263,6 +274,9 @@ Three usability tweaks to the manager list itself, no new gameplay patches.
 ---
 
 ## Release History
+
+### v0.9.1 (2026-08-01) — Game v0.110.1 compatibility
+Game update only; no feature or behaviour changes. `min_game_version` 0.108.0 → 0.110.0. Single code change: `LobbyPlayer` → `StartRunLobbyPlayer` in `RandomPoolNet.OnPlayerConnected` (the game split the lobby-player type three ways). All other patch targets and reflected members verified intact — see "Game update: v0.108.0 → v0.110.1" above. **Not yet distributed** (GitHub/Nexus/Steam pending).
 
 ### v0.8.1 (2026-07-06) — Game v0.108.0 compatibility + co-op stat/analytics bugfixes
 Game update + a cluster of bugs found via user/playtest feedback. No new features; `min_game_version` bumped.
