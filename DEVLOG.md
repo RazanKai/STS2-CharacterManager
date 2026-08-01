@@ -48,7 +48,7 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 | **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current version: v0.9.1** (built + installed locally; not yet released). Last released: v0.9.0 (GitHub + Nexus). `min_game_version 0.110.0`.
+**Current released version: v0.9.1** (GitHub + Nexus; Steam staged, awaiting the manual `ModUploader` run). `min_game_version 0.110.0`.
 
 ### Game update: v0.108.0 → v0.110.1 (2026-08-01)
 Re-decompiled (`decompiled_v0.108_backup` kept) and diffed: **54 added / 7 removed / 419 modified** source files, 2 hook changes (`ModifyCardPlayResultLocation` added; `AfterBlockBroken` now takes `PlayerChoiceContext` + two `Creature`s), and `AbstractModel.AfterModifyingCardPlayResultPileOrPosition` → `ModifyCardPlayResultLocation` / `AfterModifyingCardPlayResultLocation`. None of the changed hooks are ones we use.
@@ -276,7 +276,8 @@ Three usability tweaks to the manager list itself, no new gameplay patches.
 ## Release History
 
 ### v0.9.1 (2026-08-01) — Game v0.110.1 compatibility
-Game update only; no feature or behaviour changes. `min_game_version` 0.108.0 → 0.110.0. Single code change: `LobbyPlayer` → `StartRunLobbyPlayer` in `RandomPoolNet.OnPlayerConnected` (the game split the lobby-player type three ways). All other patch targets and reflected members verified intact — see "Game update: v0.108.0 → v0.110.1" above. **Not yet distributed** (GitHub/Nexus/Steam pending).
+Game update only; no feature or behaviour changes. `min_game_version` 0.108.0 → 0.110.0. Single code change: `LobbyPlayer` → `StartRunLobbyPlayer` in `RandomPoolNet.OnPlayerConnected` (the game split the lobby-player type three ways). All other patch targets and reflected members verified intact — see "Game update: v0.108.0 → v0.110.1" above.
+- **Distribution:** GitHub `v0.9.1` (`main`, `beta` fast-forwarded to match), Nexus via CI auto-fire (run 30706181043, success), Steam Workshop `3747550119`.
 
 ### v0.8.1 (2026-07-06) — Game v0.108.0 compatibility + co-op stat/analytics bugfixes
 Game update + a cluster of bugs found via user/playtest feedback. No new features; `min_game_version` bumped.
