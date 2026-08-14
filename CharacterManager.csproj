@@ -13,7 +13,7 @@
     <Nullable>enable</Nullable>
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <AppOutputBase>$(MSBuildProjectDirectory)\</AppOutputBase>
-    <Sts2Dir>/run/media/nazar/Gaaaymes/SteamLibrary/steamapps/common/Slay the Spire 2/data_sts2_linuxbsd_x86_64</Sts2Dir>
+    <Sts2Dir>/home/nazar/.local/share/Steam/steamapps/common/Slay the Spire 2/data_sts2_linuxbsd_x86_64</Sts2Dir>
     <ModsPath Condition="'$(ModsPath)' == '' and '$(Sts2Dir)' != ''">$([System.IO.Path]::Combine($([System.IO.Directory]::GetParent('$(Sts2Dir)').FullName), 'mods'))</ModsPath>
     <EnableCopyToModsFolderOnBuild>false</EnableCopyToModsFolderOnBuild>
   </PropertyGroup>

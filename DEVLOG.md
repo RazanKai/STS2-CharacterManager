@@ -48,7 +48,30 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 | **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current released version: v0.9.1** (GitHub + Nexus; Steam staged, awaiting the manual `ModUploader` run). `min_game_version 0.110.0`.
+**Current released version: v0.9.1** (GitHub + Nexus + Steam). **Working version: v0.9.2** — built and installed locally for v0.111.0, not yet released. `min_game_version 0.111.0`.
+
+### Game update: v0.110.1 → v0.111.0 (2026-08-14)
+
+**The game install moved libraries.** Steam reinstalled STS2 (app `2868840`) from `/run/media/nazar/Gaaaymes/SteamLibrary` to `/home/nazar/.local/share/Steam`, leaving the old directory as an empty husk that still contains `mods/`, `mods_disabled/` and `steam_appid.txt` — so `get_setup_status` just reported `game_found: false` with no hint as to why. Repointed `CharacterManager.csproj`'s `<Sts2Dir>` and `sts2-modding-mcp/sts2mcp_config.json`. The MCP server caches `GAME_DIR` at import, so `install_mod` still targets the stale path until the desktop app restarts; this build was copied into the mods dir by hand. Decompile + Roslyn index were driven directly through `sts2mcp.setup.run_decompile` / `build_roslyn_index` for the same reason.
+
+Re-decompiled (`decompiled_v0.110.1_backup` kept): **23 added / 14 removed / 174 modified** source files (3528 → 3537 `.cs`), **0 changed hooks, 0 changed public-method signatures**. Most churn is VFX namespace reshuffling (orb VFX moved into `MegaCrit.Sts2.Core.Nodes.Orbs`) and a multiplayer handshake rework (`ClientConnectionFailedMessage` deleted, replaced by `NetErrorInfo` + `HandshakeManager`).
+
+**No code changes needed.** Of the 20 game types we patch or reflect into, 13 were byte-identical and the 7 that changed changed only in methods we don't touch:
+
+- `StartRunLobby` — the handshake rework removed the public `MaxPlayers` property (now a private `_maxPlayers` field) and retyped `PlayerFailedToConnect`. We use neither. The 4-arg ctor, `CleanUp(bool, NetError)` and **`BeginRunLocally(string, List<ModifierModel>)` are byte-identical** — still exactly one `rng.NextItem(ModelDb.AllCharacters)` call preceded by the static parameterless `AllCharacters` getter, so the M7 transpiler's guards still match.
+- `NCharacterSelectScreen` / `NCustomRunScreen` — only `RemoteClientFailedToConnectToLocalHost` changed (handshake rework). `InitCharacterButtons` and `SelectCharacter` intact.
+- `NRunHistory` — prev/next arrow enable-state handling added, plus a decompiler-naming churn in the player-icon loop. `_runNames`, `RefreshAndSelectRun` and `OnSubmenuOpened` intact.
+- `CharacterModel` — `GenerateAnimator` gained a `Creature` parameter and a low-health idle state. We never call it; the M6 live portraits go through the private `VisualsPath` getter, which is unchanged.
+- `Rng` — `NextUnsignedLong`'s default argument was removed. `NextItem<T>(IEnumerable<T>)` unchanged.
+- `Splash` — rarity Uncommon → Rare. `OnPlay` (our M15 async-`MoveNext` transpiler target) unchanged.
+
+`ColorfulPhilosophers`, `Orobas`, `Kaleidoscope`, `PrismaticGem`, `ModelDb`, `NSubmenu`, `NSubmenuStack`, `NGeneralStatsGrid`, `NCompendiumSubmenu`, `NCompendiumBottomButton`, `NCharacterSelectButton`, `NMainMenuSubmenuStack` and `NCharacterStats` were all byte-identical.
+
+**Save schema:** `RunHistory.cs`, `RunHistoryPlayer.cs` and `SerializableRun.cs` are byte-identical to v0.110.1, and the only migration added this version is `SettingsSaveV7ToV8` (settings, which the analytics never read). No mod-side migration needed and no analytics field changes.
+
+Bumped `version` 0.9.1 → 0.9.2 and `min_game_version` 0.110.0 → 0.111.0, built Release clean (0 errors, 3 pre-existing CS8602 nullable warnings), installed. **Not yet verified in-game** — needs a manual launch to confirm the Manager submenu, random pool and Lend Cards still behave.
+
+> `check_mod_compatibility` again reports 22 issues, all inside `references/STS2mod-Stats_the_Spire/` (`CombatHistoryPatch.cs`, `RunLifecyclePatch.cs`, `CareerStatsSection.cs`, `FilterPanel.cs`). Our own `Code/` tree is clean.
 
 ### Game update: v0.108.0 → v0.110.1 (2026-08-01)
 Re-decompiled (`decompiled_v0.108_backup` kept) and diffed: **54 added / 7 removed / 419 modified** source files, 2 hook changes (`ModifyCardPlayResultLocation` added; `AfterBlockBroken` now takes `PlayerChoiceContext` + two `Creature`s), and `AbstractModel.AfterModifyingCardPlayResultPileOrPosition` → `ModifyCardPlayResultLocation` / `AfterModifyingCardPlayResultLocation`. None of the changed hooks are ones we use.
