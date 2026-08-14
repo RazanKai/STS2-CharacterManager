@@ -48,7 +48,7 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 | **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current released version: v0.9.1** (GitHub + Nexus + Steam). **Working version: v0.9.2** — built and installed locally for v0.111.0, not yet released. `min_game_version 0.111.0`.
+**Current released version: v0.9.2** (GitHub + Nexus shipped; Steam staged, awaiting the manual `ModUploader` run). `min_game_version 0.111.0`.
 
 ### Game update: v0.110.1 → v0.111.0 (2026-08-14)
 
@@ -297,6 +297,11 @@ Three usability tweaks to the manager list itself, no new gameplay patches.
 ---
 
 ## Release History
+
+### v0.9.2 (2026-08-14) — Game v0.111.0 compatibility
+Game update only; **no mod code changes at all** — the manifest bump was the whole release. Re-decompiled and diffed v0.110.1 → v0.111.0: 0 changed hooks, 0 changed public-method signatures, and every patch target and reflected member verified intact (`BeginRunLocally`, `RunHistory`, `RunHistoryPlayer` and `SerializableRun` all byte-identical). `min_game_version` 0.110.0 → 0.111.0. Verified in game before release. See "Game update: v0.110.1 → v0.111.0" above.
+- **Also this release:** Steam moved the game install off the external SteamLibrary to `~/.local/share/Steam`; `CharacterManager.csproj`'s `<Sts2Dir>` and the MCP's `sts2mcp_config.json` were repointed.
+- **Distribution:** GitHub `v0.9.2` (`main`, `beta` fast-forwarded to match), Nexus via CI auto-fire (run 31765792042, success), Steam Workshop `3747550119` staged.
 
 ### v0.9.1 (2026-08-01) — Game v0.110.1 compatibility
 Game update only; no feature or behaviour changes. `min_game_version` 0.108.0 → 0.110.0. Single code change: `LobbyPlayer` → `StartRunLobbyPlayer` in `RandomPoolNet.OnPlayerConnected` (the game split the lobby-player type three ways). All other patch targets and reflected members verified intact — see "Game update: v0.108.0 → v0.110.1" above.
