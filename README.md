@@ -42,9 +42,10 @@ built-in charts.
 - **Per-character analytics** — outcomes, win rate, win-rate moving windows, per-ascension
   W/L, act/floor-reached distributions, and run-length stats; plus deep deck-derived
   lists — card / relic / potion / ancient pick & win-rate & avoidance, deadliest and
-  most-damaging encounters, combat-by-tier, and death causes — with All/Standard/Custom/Daily
-  + ascension + recent-N filters. Correctly separates the game's **official (Standard-run)**
-  stats from **Custom/Daily** runs, which the game excludes from official tallies.
+  most-damaging encounters, combat-by-tier, and death causes — with
+  All/Standard/Custom/Daily/Dread/Blitz + ascension + recent-N filters. Correctly separates
+  the game's **official** stats (Standard + Dread + Blitz) from **Custom/Daily** runs, which
+  the game excludes from official tallies.
 - **Single-run autopsy** — drill into one run floor-by-floor: HP over time, boss damage,
   ancients taken, and a per-act event log, with ◀/▶ navigation across the character's runs.
 - **Read-only export** — write a character's stats and every analytics aggregate to JSON
@@ -54,7 +55,7 @@ built-in charts.
 
 ## Requirements
 
-- Slay the Spire 2 (min game version **0.107.1**)
+- Slay the Spire 2 (min game version **0.113.0**)
 - [BaseLib](https://steamcommunity.com/sharedfiles/filedetails/?id=3737335127)
   (`Alchyr.Sts2.BaseLib`) — a separate installed mod, declared as a dependency so it
   loads first.
@@ -83,9 +84,9 @@ features/how-it-works screen.
 - **In-Select applies immediately.** Toggling a character on/off updates the
   character-select roster without a restart (the cached select screen is rebuilt on
   change), including characters injected by character libraries.
-- **Standard vs Custom/Daily stats.** The game only counts **Standard** runs toward its
-  official win/loss totals; Custom and Daily runs are excluded. The analytics screen
-  shows both, clearly separated, so the numbers won't appear to contradict each other.
+- **Official vs Custom/Daily stats.** The game counts **Standard, Dread and Blitz** runs
+  toward its official win/loss totals; Custom and Daily runs are excluded. The analytics
+  screen shows each mode separately, so the numbers won't appear to contradict each other.
 - **No custom art.** The mod ships no PCK; all visuals reuse the game's own theme,
   textures, and character art.
 

@@ -48,8 +48,12 @@ namespace CharacterManager.Patches
                 }
 
                 ulong localNetId = __instance.NetService.NetId;
+                // Match the vanilla draw loop exactly: as of v0.113.0 it resolves BOTH
+                // RandomCharacter and RotatingCharacter slots (RotatingCharacter is the Dread
+                // mode's rotating pick). Keep this predicate in sync with
+                // StartRunLobby.BeginRunLocally, or the per-picker queue desyncs in MP.
                 var pickers = __instance.Players
-                    .Where(p => p.character is RandomCharacter)
+                    .Where(p => p.character is RandomCharacter || p.character is RotatingCharacter)
                     .Select(p => p.id);
                 RandomPoolStore.BeginResolution(pickers, localNetId);
             }

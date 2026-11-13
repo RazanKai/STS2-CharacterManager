@@ -48,7 +48,27 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 | **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current released version: v0.9.2** (GitHub + Nexus shipped; Steam staged, awaiting the manual `ModUploader` run). `min_game_version 0.111.0`.
+**Current released version: v0.9.2** (GitHub + Nexus shipped; Steam staged, awaiting the manual `ModUploader` run). **Working tree: v0.9.3, game v0.113.0** — verified in game, release in progress. `min_game_version 0.113.0`.
+
+### Game update: v0.111.0 → v0.113.0 (2026-11-13)
+
+Re-decompiled (`decompiled_v0.111.0_backup` kept) and diffed: **360 added / 10 removed / 744 modified** source files, **5 hook changes** (three new arrow hooks `AfterArrowShot`/`AfterArrowImpaled`/`AfterArrowDislodged`, new `TryReplaceDefaultRoomRewards`, and `AfterDeath` gained a `CardModel` parameter) and 15 public-method changes. None of the changed hooks are ones we use. The bulk of the churn is two new game modes (**Dread** and **Blitz**), the new **Fool** character, and their supporting systems (FoolArrows, Dread rotating streaks, Blitz merchant/act map, AutoSlay refactor).
+
+**Compile break — `GameMode.Custom` is gone.** The enum is now `None, Standard, Daily, Dread, Blitz`; a custom run is `GameMode.Standard` plus `IsCustomGame` on `RunHistory` / `SerializableRun` / `RunState` (migration `RunHistoryV10ToV11` / `SerializableRunV20ToV21` rewrites old `game_mode: "custom"` saves accordingly). `CharacterAnalytics` now stores `RunSummary.IsCustomGame`, `GameModeFilter` gained `Dread` + `Blitz`, and `ModeMatchesFilter` treats `Standard` as `mode == Standard && !isCustom`, `Custom` as the flag. Per-mode tallies were split into Standard / Custom / Daily / Dread / Blitz (previously every non-Standard run was bucketed as "Custom/Daily", which would have mislabelled Dread/Blitz). The analytics screen shows one breakdown panel per non-Standard mode on the All tab, and keeps the official `CharacterStats` summary visible on All/Standard/Dread/Blitz (the game counts Dread and Blitz as official; only Daily + custom are excluded).
+
+**Silent MP break — `StartRunLobby` ctor arity changed 4 → 5/6** (added `bool isCustom`, plus a `maxPlayers`/`TimeServerResult` split). `RandomPoolLobbyCtorPatch` selected the ctor by `GetParameters().Length == 4`, so it would have found nothing and quietly disabled random-pool networking. It now patches the **shortest declared ctor** (every other overload chains to it), which is robust to future parameter additions. `BeginRunLocally(string, List<ModifierModel>)` still exists and still contains exactly **one** `rng.NextItem(ModelDb.AllCharacters)` call preceded by the static parameterless getter, so the M7 transpiler still matches; its draw loop now also resolves **`RotatingCharacter`** slots, so the prefix queues both random-ish character types to keep per-picker resolution in order.
+
+**New base character — `Fool`.** `ModelDb.AllCharacters` grew from 5 to 6 (Ironclad, Silent, Regent, Necrobinder, Defect, Fool). `CharacterHelper.BaseIds` is a hardcoded set, so Fool was being treated as modded: sorted into the custom section, exported as "Custom mod", and — the visible bug — injected a **second** stats card by `StatsGridPatch` (vanilla renders it, then `GetCustomCharacters()` included it too). Added `ModelDb.Character<Fool>().Id` to `BaseIds`.
+
+**New roster-listing screens — `NDreadScreen`, `NBlitzScreen`.** Both build one `NCharacterSelectButton` per `ModelDb.AllCharacters` (Dread also adds a rotating button) and are cached on `NMainMenuSubmenuStack` as `_dreadScreen` / `_blitzScreen`. The In-Select toggle now arms the `AllCharacters` getter filter and removes disabled buttons on both screens (including dropping removed buttons from `NDreadScreen`'s private `_charSelectButtons` list so its later player-change/ animation passes never touch a freed node), and the roster-toggle handler discards their cached instances too. The Random-pool panel also follows the Random tile onto `NBlitzScreen` (its Random draw uses the same `BeginRunLocally` path); Dread's rotating pick deliberately doesn't use the pool. `NCharacterSelectScreen.SelectCharacter` also dropped its second `CharacterModel` argument (the button owns the character now) — our postfix already took only the button, so no change was needed beyond the doc comment.
+
+**Everything else verified intact:** `NRunHistory._runNames`/`RefreshAndSelectRun`/`OnSubmenuOpened`; `NSubmenu.OnSubmenuClosed`; `NGeneralStatsGrid.LoadStats`/`_characterStatContainer`; `NCompendiumSubmenu._Ready`/`_statisticsButton`/`_stack`; `NCompendiumBottomButton._locKeyPrefix`/`_label`/`_icon`/`_bgPanel`/`_hsv`; `NCharacterSelectScreen.InitCharacterButtons`/`SelectCharacter`; `NCustomRunScreen.InitCharacterButtons`; `ModelDb.AllCharacters`/`_contentById`; `NMainMenuSubmenuStack._Ready`/`_characterSelectSubmenu`/`_customRunScreen`; `NCharacterSelectButton.Character`/`IsRandom`; `NCharacterStats._Ready`/`_characterStats`; `StartRunLobby.CleanUp`/`PlayerConnected`; `Rng.NextItem<T>`; `CharacterModel.VisualsPath`; `RunHistory` fields (only `IsCustomGame` added), `RunHistoryPlayer` byte-identical; and all five M15 cross-source targets (`ColorfulPhilosophers`/`Orobas.GenerateInitialOptions`, `Kaleidoscope.AfterObtained`, `Splash.OnPlay`, `PrismaticGem.ModifyCardRewardCreationOptions`, `UnlockState.CharacterCardPools`/`Characters`). `CharacterStats` is additive only (Dread streak fields); every field the exporter/manager reads still exists.
+
+**Save schema:** `RunHistory` v10→v11 and `SerializableRun` v20→v21 (both just add `is_custom_game`); no mod-side migration needed. Settings/Progress migrations are unrelated to what we read.
+
+Bumped `version` 0.9.2 → 0.9.3 and `min_game_version` 0.111.0 → 0.113.0, built Release clean (0 errors, the same 3 pre-existing CS8602 nullable warnings), installed. **Verified in game on v0.113.0** — Manager submenu, analytics tabs (including Dread/Blitz), Random pool, and Lend Cards all behave correctly.
+
+> `check_mod_compatibility` reports the same 22 issues, all inside `references/STS2mod-Stats_the_Spire/`; our own `Code/` tree is clean.
 
 ### Game update: v0.110.1 → v0.111.0 (2026-08-14)
 
@@ -297,6 +317,16 @@ Three usability tweaks to the manager list itself, no new gameplay patches.
 ---
 
 ## Release History
+
+### v0.9.3 (2026-11-13) — Game v0.113.0 compatibility (Dread/Blitz + Fool)
+Compatibility + correctness release for the game's big v0.112/v0.113 update. `min_game_version` 0.111.0 → 0.113.0.
+- **Compile fix:** `GameMode.Custom` was removed; custom runs are now `Standard` + `RunHistory.IsCustomGame`. Analytics mode filtering/tallies were reworked around the new two-axis model.
+- **New modes:** added Dread and Blitz filters plus per-mode breakdown panels; the official `CharacterStats` summary now shows on All/Standard/Dread/Blitz (the game counts Dread + Blitz officially).
+- **New base character:** Fool added to `CharacterHelper.BaseIds`, fixing duplicate Compendium stats cards and the wrong "Custom" label/sort.
+- **New screens:** In-Select hiding extended to `NDreadScreen` and `NBlitzScreen`, and their cached instances are invalidated on roster changes.
+- **MP fix:** `StartRunLobby`'s ctor arity changed; the random-pool ctor patch now targets the shortest declared ctor instead of hardcoding 4 params.
+- **Random pool:** the `BeginRunLocally` prefix now also queues `RotatingCharacter` slots to match the vanilla draw loop.
+- **Distribution:** none yet — verified in game; release pending.
 
 ### v0.9.2 (2026-08-14) — Game v0.111.0 compatibility
 Game update only; **no mod code changes at all** — the manifest bump was the whole release. Re-decompiled and diffed v0.110.1 → v0.111.0: 0 changed hooks, 0 changed public-method signatures, and every patch target and reflected member verified intact (`BeginRunLocally`, `RunHistory`, `RunHistoryPlayer` and `SerializableRun` all byte-identical). `min_game_version` 0.110.0 → 0.111.0. Verified in game before release. See "Game update: v0.110.1 → v0.111.0" above.

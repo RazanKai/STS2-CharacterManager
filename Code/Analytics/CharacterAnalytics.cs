@@ -9,7 +9,10 @@ using MegaCrit.Sts2.Core.Saves;
 
 namespace CharacterManager.Analytics
 {
-    public enum GameModeFilter { All, Standard, Custom, Daily }
+    // Game v0.113.0 split "Custom" out of GameMode into RunHistory.IsCustomGame (old custom
+    // saves migrate to GameMode.Standard + IsCustomGame=true) and added Dread + Blitz modes.
+    // So mode selection is two axes: the enum plus the custom flag.
+    public enum GameModeFilter { All, Standard, Custom, Daily, Dread, Blitz }
 
     /// <summary>A single card offered in a reward this run, with whether it was taken (M9).</summary>
     public sealed class CardChoiceRec
@@ -144,6 +147,7 @@ namespace CharacterManager.Analytics
         public int ActsReached;
         public int FloorsReached;
         public GameMode GameMode;    // which game mode this run was in
+        public bool IsCustomGame;    // v0.113.0: custom runs are GameMode.Standard + this flag
 
         // ─── Per-run card facts (M9), populated by the deep parse and aggregated on demand ───
         /// <summary>Every card offered in a reward this run, with its picked flag (per-occurrence).</summary>
@@ -209,10 +213,15 @@ namespace CharacterManager.Analytics
     public sealed class CharacterAnalytics
     {
         public int Total, Wins, Deaths, Abandoned, MaxAct, MaxFloor;
-        // Split by game mode: only Standard runs count toward the game's official CharacterStats
-        // (Custom and Daily are excluded by ProgressSaveManager). We surface both views.
+        // Split by game mode. The game's own CharacterStats count Standard + Dread + Blitz, and
+        // exclude Daily + custom runs (see ProgressSaveManager.UpdateWithRunData). We surface every
+        // mode separately. Custom is not a GameMode since v0.113.0 — it's IsCustomGame on a
+        // Standard run — so it gets its own bucket.
         public int StandardTotal, StandardWins, StandardDeaths, StandardAbandoned;
-        public int CustomTotal, CustomWins, CustomDeaths, CustomAbandoned; // Custom + Daily (non-Standard)
+        public int CustomTotal, CustomWins, CustomDeaths, CustomAbandoned;
+        public int DailyTotal, DailyWins, DailyDeaths, DailyAbandoned;
+        public int DreadTotal, DreadWins, DreadDeaths, DreadAbandoned;
+        public int BlitzTotal, BlitzWins, BlitzDeaths, BlitzAbandoned;
         public float MaxRunTime;
         public double SumRunTime;
         public float FastestWin = -1f;
@@ -275,6 +284,7 @@ namespace CharacterManager.Analytics
                         RunTime = h.RunTime,
                         ActsReached = actsReached,
                         GameMode = h.GameMode,
+                        IsCustomGame = h.IsCustomGame,
                     };
                     if (h.MapPointHistory != null)
                         foreach (var rooms in h.MapPointHistory)
@@ -310,21 +320,7 @@ namespace CharacterManager.Analytics
                     else if (h.WasAbandoned) a.Abandoned++;
                     else a.Deaths++;
 
-                    // Per-mode tallies (Standard = official; everything else = Custom/Daily).
-                    if (h.GameMode == GameMode.Standard)
-                    {
-                        a.StandardTotal++;
-                        if (h.Win) a.StandardWins++;
-                        else if (h.WasAbandoned) a.StandardAbandoned++;
-                        else a.StandardDeaths++;
-                    }
-                    else
-                    {
-                        a.CustomTotal++;
-                        if (h.Win) a.CustomWins++;
-                        else if (h.WasAbandoned) a.CustomAbandoned++;
-                        else a.CustomDeaths++;
-                    }
+                    TallyMode(a, h.GameMode, h.IsCustomGame, h.Win, h.WasAbandoned);
 
                     a.SumRunTime += h.RunTime;
                     if (h.RunTime > a.MaxRunTime) a.MaxRunTime = h.RunTime;
@@ -370,7 +366,7 @@ namespace CharacterManager.Analytics
             var matched = new List<RunSummary>(Runs.Count);
             foreach (var run in Runs)
             {
-                if (!ModeMatchesFilter(run.GameMode, filter.Mode)) continue;
+                if (!ModeMatchesFilter(run.GameMode, run.IsCustomGame, filter.Mode)) continue;
                 if (run.Ascension < filter.MinAscension) continue;
                 matched.Add(run);
             }
@@ -390,21 +386,8 @@ namespace CharacterManager.Analytics
                 else if (run.Abandoned) r.Abandoned++;
                 else r.Deaths++;
 
-                // Per-mode tallies so the Custom/Daily section still works after filtering.
-                if (run.GameMode == GameMode.Standard)
-                {
-                    r.StandardTotal++;
-                    if (run.Win) r.StandardWins++;
-                    else if (run.Abandoned) r.StandardAbandoned++;
-                    else r.StandardDeaths++;
-                }
-                else
-                {
-                    r.CustomTotal++;
-                    if (run.Win) r.CustomWins++;
-                    else if (run.Abandoned) r.CustomAbandoned++;
-                    else r.CustomDeaths++;
-                }
+                // Per-mode tallies so the mode-breakdown section still works after filtering.
+                TallyMode(r, run.GameMode, run.IsCustomGame, run.Win, run.Abandoned);
 
                 r.SumRunTime += run.RunTime;
                 if (run.RunTime > r.MaxRunTime) r.MaxRunTime = run.RunTime;
@@ -817,16 +800,65 @@ namespace CharacterManager.Analytics
             return arr[idx];
         }
 
-        private static bool ModeMatchesFilter(GameMode mode, GameModeFilter filter)
+        /// <summary>
+        /// Adds this run's outcome to its mode bucket. A run belongs to exactly one bucket:
+        /// custom (any GameMode with IsCustomGame), else Daily, Dread, Blitz, else Standard.
+        /// Custom wins over the enum because v0.113.0 stores custom runs as Standard + the flag.
+        /// </summary>
+        private static void TallyMode(CharacterAnalytics a, GameMode mode, bool isCustom, bool win, bool abandoned)
+        {
+            if (isCustom)
+            {
+                a.CustomTotal++;
+                if (win) a.CustomWins++;
+                else if (abandoned) a.CustomAbandoned++;
+                else a.CustomDeaths++;
+                return;
+            }
+
+            switch (mode)
+            {
+                case GameMode.Daily:
+                    a.DailyTotal++;
+                    if (win) a.DailyWins++;
+                    else if (abandoned) a.DailyAbandoned++;
+                    else a.DailyDeaths++;
+                    break;
+                case GameMode.Dread:
+                    a.DreadTotal++;
+                    if (win) a.DreadWins++;
+                    else if (abandoned) a.DreadAbandoned++;
+                    else a.DreadDeaths++;
+                    break;
+                case GameMode.Blitz:
+                    a.BlitzTotal++;
+                    if (win) a.BlitzWins++;
+                    else if (abandoned) a.BlitzAbandoned++;
+                    else a.BlitzDeaths++;
+                    break;
+                default:
+                    a.StandardTotal++;
+                    if (win) a.StandardWins++;
+                    else if (abandoned) a.StandardAbandoned++;
+                    else a.StandardDeaths++;
+                    break;
+            }
+        }
+
+        private static bool ModeMatchesFilter(GameMode mode, bool isCustom, GameModeFilter filter)
         {
             return filter switch
             {
                 GameModeFilter.All => true,
-                GameModeFilter.Standard => mode == GameMode.Standard,
-                GameModeFilter.Custom => mode == GameMode.Custom,
+                // Custom is a flag on a Standard run since v0.113.0, so Standard must exclude it.
+                GameModeFilter.Standard => mode == GameMode.Standard && !isCustom,
+                GameModeFilter.Custom => isCustom,
                 GameModeFilter.Daily => mode == GameMode.Daily,
+                GameModeFilter.Dread => mode == GameMode.Dread,
+                GameModeFilter.Blitz => mode == GameMode.Blitz,
                 _ => true,
             };
         }
+
     }
 }

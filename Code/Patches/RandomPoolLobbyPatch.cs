@@ -127,11 +127,14 @@ namespace CharacterManager.Patches
     {
         private static MethodBase? TargetMethod()
         {
-            // Patch the 4-arg ctor; the 5-arg overload chains to it, so this covers both paths.
+            // Patch the SHORTEST declared ctor — the other overloads chain to it, so this covers
+            // every construction path. (v0.111.0 had a 4-arg ctor; v0.113.0 added `bool isCustom`
+            // and the Blitz/Dread support, making it 5/6 args. Counting params by hand is brittle.)
             var ctor = AccessTools.GetDeclaredConstructors(typeof(StartRunLobby))
-                .FirstOrDefault(c => c.GetParameters().Length == 4);
+                .OrderBy(c => c.GetParameters().Length)
+                .FirstOrDefault();
             if (ctor == null)
-                Log.Warn("[CharacterManager] random pool: StartRunLobby 4-arg ctor not found; MP sync disabled.");
+                Log.Warn("[CharacterManager] random pool: StartRunLobby ctor not found; MP sync disabled.");
             return ctor;
         }
 

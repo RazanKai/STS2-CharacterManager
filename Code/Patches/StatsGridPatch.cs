@@ -12,7 +12,7 @@ namespace CharacterManager.Patches
     /// Compendium → Statistics screen, honoring the per-character "Stats Shown" toggle
     /// managed by the Character Manager screen (<see cref="VisibilityStore"/>).
     ///
-    /// <para>The game's own <c>NGeneralStatsGrid.LoadStats</c> adds sections for the 5
+    /// <para>The game's own <c>NGeneralStatsGrid.LoadStats</c> adds sections for the
     /// base characters only (via private <c>CreateCharacterSection</c>). This postfix runs
     /// afterwards and appends one section per visible custom character that has recorded
     /// stats, mirroring the game's rendering exactly: <c>NCharacterStats.Create(stats)</c>

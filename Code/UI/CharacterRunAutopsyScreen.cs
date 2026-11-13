@@ -385,7 +385,7 @@ namespace CharacterManager.UI
                 ("Acts reached", acts.ToString()),
                 ("Floors", floorCount.ToString()),
                 ("Killed by", killedBy),
-                ("Game mode", h.GameMode.ToString()),
+                ("Game mode", h.IsCustomGame ? "Custom" : h.GameMode.ToString()),
                 ("Seed", string.IsNullOrEmpty(h.Seed) ? "—" : h.Seed),
             };
             AddGrid(body, rows, 2);

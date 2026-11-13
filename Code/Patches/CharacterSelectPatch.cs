@@ -8,6 +8,8 @@ using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.Screens.Dread;
+using MegaCrit.Sts2.Core.Nodes.Screens.Blitz;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 
@@ -80,6 +82,25 @@ namespace CharacterManager.Patches
         [HarmonyFinalizer]
         [HarmonyPatch(typeof(NCustomRunScreen), "InitCharacterButtons")]
         public static void Disarm_CustomRun() => _filterDepth--;
+
+        // v0.113.0 added two more screens that build one button per ModelDb.AllCharacters entry:
+        // Dread (with its rotating pick) and Blitz. Arm the same getter filter there so the
+        // In-Select toggle behaves consistently across every roster-listing screen.
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(NDreadScreen), "InitCharacterButtons")]
+        public static void Arm_Dread() => _filterDepth++;
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(typeof(NDreadScreen), "InitCharacterButtons")]
+        public static void Disarm_Dread() => _filterDepth--;
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(NBlitzScreen), "InitCharacterButtons")]
+        public static void Arm_Blitz() => _filterDepth++;
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(typeof(NBlitzScreen), "InitCharacterButtons")]
+        public static void Disarm_Blitz() => _filterDepth--;
 
         // ─── Remove disabled customs from the roster during construction ──────
         // This handles characters that reach the select screen through the VANILLA path — i.e.
@@ -165,6 +186,20 @@ namespace CharacterManager.Patches
         public static void RemoveDisabledButtons_CustomRun(NCustomRunScreen __instance)
             => RemoveDisabledButtons((Node)__instance);
 
+        [HarmonyPostfix]
+        [HarmonyPriority(int.MinValue)]
+        [HarmonyAfter("BaseLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry", "com.ritsukage.sts2-RitsuLib.framework-character-assets")]
+        [HarmonyPatch(typeof(NDreadScreen), "InitCharacterButtons")]
+        public static void RemoveDisabledButtons_Dread(NDreadScreen __instance)
+            => RemoveDisabledButtons((Node)__instance);
+
+        [HarmonyPostfix]
+        [HarmonyPriority(int.MinValue)]
+        [HarmonyAfter("BaseLib", "com.ritsukage.sts2-RitsuLib.framework-content-registry", "com.ritsukage.sts2-RitsuLib.framework-character-assets")]
+        [HarmonyPatch(typeof(NBlitzScreen), "InitCharacterButtons")]
+        public static void RemoveDisabledButtons_Blitz(NBlitzScreen __instance)
+            => RemoveDisabledButtons((Node)__instance);
+
         // Cached accessor for NCharacterSelectButton.Character (public getter; cached to avoid
         // per-button reflection cost on every screen build).
         private static readonly PropertyInfo? ButtonCharacterProp =
@@ -182,6 +217,18 @@ namespace CharacterManager.Patches
                     btn.GetParent()?.RemoveChild(btn);
                     btn.QueueFree();
                 }
+
+                // NDreadScreen keeps a private List<NCharacterSelectButton> (_charSelectButtons) in
+                // addition to the container, and iterates it on player changes/animation. A node
+                // that is queued-free is still a disposed Godot object, so touching it later throws.
+                // Drop our removed buttons from that list (the other screens iterate the container).
+                if (screenRoot is NDreadScreen)
+                {
+                    var listField = AccessTools.Field(typeof(NDreadScreen), "_charSelectButtons");
+                    if (listField?.GetValue(screenRoot) is System.Collections.IList buttons)
+                        foreach (var btn in toRemove) buttons.Remove(btn);
+                }
+
                 if (toRemove.Count > 0)
                     Log.Info($"[CharacterManager] character-select: removed {toRemove.Count} disabled custom button(s) from the strip.");
             }
@@ -228,6 +275,11 @@ namespace CharacterManager.Patches
             AccessTools.Field(typeof(NMainMenuSubmenuStack), "_characterSelectSubmenu");
         private static readonly FieldInfo? CustomRunField =
             AccessTools.Field(typeof(NMainMenuSubmenuStack), "_customRunScreen");
+        // v0.113.0: Dread + Blitz screens are cached the same way and also list the roster.
+        private static readonly FieldInfo? DreadField =
+            AccessTools.Field(typeof(NMainMenuSubmenuStack), "_dreadScreen");
+        private static readonly FieldInfo? BlitzField =
+            AccessTools.Field(typeof(NMainMenuSubmenuStack), "_blitzScreen");
 
         // Capture the live main-menu stack and wire the toggle handler when the stack is ready.
         // Doing it here (rather than in a static constructor) guarantees the subscription is active
@@ -251,6 +303,8 @@ namespace CharacterManager.Patches
 
             DiscardCachedScreen(stack, CharSelectField);
             DiscardCachedScreen(stack, CustomRunField);
+            DiscardCachedScreen(stack, DreadField);
+            DiscardCachedScreen(stack, BlitzField);
         }
 
         /// <summary>

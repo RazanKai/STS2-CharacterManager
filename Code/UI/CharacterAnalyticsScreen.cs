@@ -172,7 +172,7 @@ namespace CharacterManager.UI
             UiTheme.PlaceInColumn(bar, top, 28f);
             AddChild(bar);
 
-            foreach (var mode in new[] { GameModeFilter.All, GameModeFilter.Standard, GameModeFilter.Custom, GameModeFilter.Daily })
+            foreach (var mode in new[] { GameModeFilter.All, GameModeFilter.Standard, GameModeFilter.Custom, GameModeFilter.Daily, GameModeFilter.Dread, GameModeFilter.Blitz })
             {
                 var label = mode switch
                 {
@@ -180,10 +180,12 @@ namespace CharacterManager.UI
                     GameModeFilter.Standard => "Standard",
                     GameModeFilter.Custom => "Custom",
                     GameModeFilter.Daily => "Daily",
+                    GameModeFilter.Dread => "Dread",
+                    GameModeFilter.Blitz => "Blitz",
                     _ => "All",
                 };
 
-                var btn = UiTheme.MakeButton(label, null, 80f);
+                var btn = UiTheme.MakeButton(label, null, 74f);
                 RefreshFilterButton(btn, mode);
                 btn.Pressed += () => SetFilter(mode);
                 bar.AddChild(btn);
@@ -268,11 +270,13 @@ namespace CharacterManager.UI
             var stats = GetStats(c);
             var full = _fullAgg;
 
-            // The Summary panel is sourced from CharacterStats (the game's official, Standard-only
-            // lifetime tallies), so it's only meaningful on the All and Standard tabs. Hide it on
-            // Custom/Daily, where those numbers don't correspond to the runs being shown.
+            // The Summary panel is sourced from CharacterStats (the game's official, lifetime
+            // tallies). Since v0.113.0 the game counts Standard + Dread + Blitz there and excludes
+            // Daily + custom runs — so show it on All/Standard/Dread/Blitz, hide it on Custom/Daily.
             bool showSummary = _currentFilter == GameModeFilter.All
-                            || _currentFilter == GameModeFilter.Standard;
+                            || _currentFilter == GameModeFilter.Standard
+                            || _currentFilter == GameModeFilter.Dread
+                            || _currentFilter == GameModeFilter.Blitz;
 
             if (full != null && full.LoadFailed)
             {
@@ -289,8 +293,9 @@ namespace CharacterManager.UI
                 return;
             }
 
-            // Official, Standard-only lifetime summary (CharacterStats) — shown only on the
-            // All/Standard tabs (see showSummary above); hidden on Custom/Daily.
+            // Official lifetime summary (CharacterStats). Since v0.113.0 "official" means
+            // Standard + Dread + Blitz (Daily and custom runs are excluded by the game), so keep
+            // it on those tabs and hide it on Custom/Daily.
             if (stats != null && showSummary)
                 AddSummarySection(stats);
 
@@ -307,8 +312,8 @@ namespace CharacterManager.UI
             {
                 string suffix = FilterSuffix();
 
-                if (_currentFilter == GameModeFilter.All && agg.CustomTotal > 0)
-                    AddCustomDailySection(agg);
+                if (_currentFilter == GameModeFilter.All)
+                    AddModeBreakdownSections(agg);
 
                 AddRunDetailsSection(agg, suffix);
                 AddCardSections(agg);
@@ -390,10 +395,10 @@ namespace CharacterManager.UI
         private const float BarLabelWidth = 170f;
         private const float BarValueWidth = 90f;
 
-        /// <summary>Official, Standard-only summary from CharacterStats (matches the manager list).</summary>
+        /// <summary>Official lifetime summary from CharacterStats (matches the manager list).</summary>
         private void AddSummarySection(CharacterStats? stats)
         {
-            var panel = MakeSectionPanel("Summary  (Standard runs)", out var body);
+            var panel = MakeSectionPanel("Summary  (official)", out var body);
 
             int w = stats?.TotalWins ?? 0;
             int l = stats?.TotalLosses ?? 0;
@@ -419,38 +424,64 @@ namespace CharacterManager.UI
             };
             AddStatsGrid(body, rows, 1);
 
+            body.AddChild(UiTheme.MakeLabel(
+                "Official tallies count Standard, Dread and Blitz runs; Daily and custom runs are excluded.",
+                MutedColor, UiTheme.SmallFontSize));
+
             AddSection(panel);
         }
 
-        /// <summary>Custom + Daily runs — recorded in run history but excluded from official stats.</summary>
-        private void AddCustomDailySection(CharacterAnalytics agg)
+        /// <summary>
+        /// On the All tab, one panel per non-Standard mode that has runs. Custom and Daily are
+        /// excluded from the game's official stats; Dread and Blitz are included but tracked
+        /// separately by the game (own ascensions/streaks).
+        /// </summary>
+        private void AddModeBreakdownSections(CharacterAnalytics agg)
         {
-            var panel = MakeSectionPanel("Custom / Daily Runs", out var body);
+            if (agg.CustomTotal > 0)
+                AddModeSection("Custom Runs", agg.CustomTotal, agg.CustomWins, agg.CustomDeaths, agg.CustomAbandoned,
+                    "Win rate excludes abandons. Custom runs are not counted by the game's official stats.");
+
+            if (agg.DailyTotal > 0)
+                AddModeSection("Daily Runs", agg.DailyTotal, agg.DailyWins, agg.DailyDeaths, agg.DailyAbandoned,
+                    "Win rate excludes abandons. Daily runs are not counted by the game's official stats.");
+
+            if (agg.DreadTotal > 0)
+                AddModeSection("Dread Runs", agg.DreadTotal, agg.DreadWins, agg.DreadDeaths, agg.DreadAbandoned,
+                    "Win rate excludes abandons. Dread is tracked separately by the game (own ascension and win-streak).");
+
+            if (agg.BlitzTotal > 0)
+                AddModeSection("Blitz Runs", agg.BlitzTotal, agg.BlitzWins, agg.BlitzDeaths, agg.BlitzAbandoned,
+                    "Win rate excludes abandons. Blitz is tracked separately by the game (own ascension).");
+        }
+
+        /// <summary>One mode's W/L/A breakdown panel (non-Standard modes on the All tab).</summary>
+        private void AddModeSection(string title, int total, int wins, int deaths, int abandoned, string note)
+        {
+            var panel = MakeSectionPanel(title, out var body);
 
             var segs = new (Color, float)[]
             {
-                (UiTheme.Good, agg.CustomWins),
-                (UiTheme.Bad, agg.CustomDeaths),
-                (MutedColor, agg.CustomAbandoned),
+                (UiTheme.Good, wins),
+                (UiTheme.Bad, deaths),
+                (MutedColor, abandoned),
             };
             var bar = UiTheme.MakeBarTrack(18f, segs, 0f);
             // Decisive win rate (abandons excluded), consistent with the Win Rate windows section.
-            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(agg.CustomWins, agg.CustomDeaths), BarValueWidth));
+            body.AddChild(UiTheme.MakeBarRow("Win rate", BarLabelWidth, bar, WinRate(wins, deaths), BarValueWidth));
 
             body.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 4f), MouseFilter = MouseFilterEnum.Ignore });
 
             var rows = new List<(string, string)>
             {
-                ("Runs", agg.CustomTotal.ToString()),
-                ("Wins", agg.CustomWins.ToString()),
-                ("Deaths", agg.CustomDeaths.ToString()),
-                ("Abandoned", agg.CustomAbandoned.ToString()),
+                ("Runs", total.ToString()),
+                ("Wins", wins.ToString()),
+                ("Deaths", deaths.ToString()),
+                ("Abandoned", abandoned.ToString()),
             };
             AddStatsGrid(body, rows, 1);
 
-            body.AddChild(UiTheme.MakeLabel(
-                "Win rate excludes abandons. These runs are not counted by the game's official stats.",
-                MutedColor, UiTheme.SmallFontSize));
+            body.AddChild(UiTheme.MakeLabel(note, MutedColor, UiTheme.SmallFontSize));
 
             AddSection(panel);
         }

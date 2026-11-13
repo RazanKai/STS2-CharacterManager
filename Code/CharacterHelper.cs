@@ -12,7 +12,8 @@ namespace CharacterManager
     /// <summary>
     /// Helpers for enumerating playable characters, including modded ones.
     ///
-    /// <c>ModelDb.AllCharacters</c> is a hardcoded array of the 5 base characters only.
+    /// <c>ModelDb.AllCharacters</c> is a hardcoded array of the base characters only
+    /// (6 as of game v0.113.0 — Fool joined Ironclad/Silent/Regent/Necrobinder/Defect).
     /// The full registry (base + modded) lives in the private <c>ModelDb._contentById</c>
     /// dictionary, which we read via reflection.
     /// </summary>
@@ -23,6 +24,10 @@ namespace CharacterManager
 
         private static HashSet<ModelId>? _baseIds;
 
+        // Keep this list in sync with ModelDb.AllCharacters. A base character missing here is
+        // silently treated as modded: it sorts into the custom section, gets labelled "Custom"
+        // by the exporter, and (worst) the Compendium stats postfix injects it a SECOND time
+        // because GetCustomCharacters() would include it. Added Fool for game v0.113.0.
         private static HashSet<ModelId> BaseIds => _baseIds ??= new HashSet<ModelId>
         {
             ModelDb.Character<Ironclad>().Id,
@@ -30,6 +35,7 @@ namespace CharacterManager
             ModelDb.Character<Regent>().Id,
             ModelDb.Character<Necrobinder>().Id,
             ModelDb.Character<Defect>().Id,
+            ModelDb.Character<Fool>().Id,
         };
 
         public static bool IsBaseCharacter(ModelId id) => BaseIds.Contains(id);
@@ -40,7 +46,7 @@ namespace CharacterManager
         ///
         /// <para>There are TWO runtime sources of characters and they overlap:</para>
         /// <list type="bullet">
-        ///   <item><c>ModelDb.AllCharacters</c> — a hardcoded array of the 5 base
+        ///   <item><c>ModelDb.AllCharacters</c> — a hardcoded array of the base
         ///   characters that character libraries (BaseLib, KitLib, RitsuLib) and the
         ///   character mods themselves Harmony-patch (<c>get_AllCharacters</c>) to append
         ///   their modded characters. So at runtime this often already contains the full
