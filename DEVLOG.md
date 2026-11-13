@@ -48,7 +48,7 @@ The Character Management Mod extends the earlier **CustomCharacterStats** mod in
 | **M16** | **Manager list polish: per-row win-rate sparkline, W/L scope, Yes/No Lend Cards, ? Help screen** | ✅ Shipped | v0.8.0 |
 | **M17** | **Compendium stats crash fix: exclude non-playable meta-characters (RandomCharacter/Deprived)** | ✅ Shipped | v0.9.0 |
 
-**Current released version: v0.9.2** (GitHub + Nexus shipped; Steam staged, awaiting the manual `ModUploader` run). **Working tree: v0.9.3, game v0.113.0** — verified in game, release in progress. `min_game_version 0.113.0`.
+**Current released version: v0.9.3** — game v0.113.0 compat (Dread/Blitz modes, Fool base character). Released on GitHub, Nexus and Steam Workshop; `main` and `beta` match. `min_game_version 0.113.0`.
 
 ### Game update: v0.111.0 → v0.113.0 (2026-11-13)
 
@@ -326,7 +326,7 @@ Compatibility + correctness release for the game's big v0.112/v0.113 update. `mi
 - **New screens:** In-Select hiding extended to `NDreadScreen` and `NBlitzScreen`, and their cached instances are invalidated on roster changes.
 - **MP fix:** `StartRunLobby`'s ctor arity changed; the random-pool ctor patch now targets the shortest declared ctor instead of hardcoding 4 params.
 - **Random pool:** the `BeginRunLocally` prefix now also queues `RotatingCharacter` slots to match the vanilla draw loop.
-- **Distribution:** none yet — verified in game; release pending.
+- **Distribution:** GitHub `v0.9.3` (`main`, `beta` fast-forwarded), Nexus via CI auto-fire (run 43426983886, success), Steam Workshop `3747550119`.
 
 ### v0.9.2 (2026-08-14) — Game v0.111.0 compatibility
 Game update only; **no mod code changes at all** — the manifest bump was the whole release. Re-decompiled and diffed v0.110.1 → v0.111.0: 0 changed hooks, 0 changed public-method signatures, and every patch target and reflected member verified intact (`BeginRunLocally`, `RunHistory`, `RunHistoryPlayer` and `SerializableRun` all byte-identical). `min_game_version` 0.110.0 → 0.111.0. Verified in game before release. See "Game update: v0.110.1 → v0.111.0" above.
